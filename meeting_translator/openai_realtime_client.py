@@ -36,7 +36,7 @@ class OpenAIRealtimeClient(BaseTranslationClient):
         voice: Optional[str] = "alloy",
         audio_enabled: bool = True,
         glossary_file: Optional[str] = None,
-        model: str = "gpt-4o-realtime-preview-2025-06-03",
+        model: str = "gpt-realtime-2025-08-28",
         **kwargs
     ):
         super().__init__(api_key, source_language, target_language, voice, audio_enabled, glossary_file)
