@@ -1,6 +1,5 @@
 # Meeting Translator - 实时会议翻译系统
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 
 **从"茶壶里装汤圆"到流畅对话：打造零延迟实时会议翻译系统**
@@ -226,12 +225,6 @@ meeting_translator/
 
 ---
 
-## 许可证
-
-本项目采用 MIT 许可证 - 查看 [LICENSE](LICENSE) 文件了解详情
-
----
-
 ## 致谢
 
 - 感谢阿里云通义千问团队提供的实时翻译API
@@ -241,7 +234,7 @@ meeting_translator/
 
 ## 联系方式
 
-- **作者**: Eren Yuan
+- **作者**: Ren Yuan
 - **GitHub**: [@eerenyuan](https://github.com/eerenyuan)
 - **项目地址**: [https://github.com/eerenyuan/meeting_translator](https://github.com/eerenyuan/meeting_translator)
 

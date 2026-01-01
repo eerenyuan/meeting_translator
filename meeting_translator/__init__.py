@@ -6,4 +6,4 @@ A zero-latency, bidirectional real-time translation system for business meetings
 """
 
 __version__ = "1.0.0"
-__author__ = "Eren Yuan"
+__author__ = "Ren Yuan"
