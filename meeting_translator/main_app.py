@@ -56,6 +56,7 @@ load_dotenv()
 class TranslationSignals(QObject):
     """翻译信号（用于线程间通信）"""
     translation_received = pyqtSignal(str, str, bool)  # (source_text, target_text, is_final)
+    error_occurred = pyqtSignal(str, object)  # (error_message, exception)
 
 
 class MeetingTranslatorApp(QWidget):
@@ -64,11 +65,13 @@ class MeetingTranslatorApp(QWidget):
     def __init__(self):
         super().__init__()
 
-        # 获取 API Key
-        self.api_key = os.getenv("DASHSCOPE_API_KEY") or os.getenv("ALIYUN_API_KEY")
-        if not self.api_key:
-            logger.error("未设置 DASHSCOPE_API_KEY 或 ALIYUN_API_KEY 环境变量")
-            sys.exit(1)
+        # 获取翻译服务提供商（默认 aliyun）
+        self.provider = os.getenv("TRANSLATION_PROVIDER", "aliyun").lower()
+        logger.info(f"翻译服务提供商: {self.provider}")
+
+        # API Key 将由 TranslationClientFactory 根据 provider 自动加载
+        # 这样可以确保每个提供商使用正确的 API Key
+        self.api_key = None
 
         # 翻译模式
         self.current_mode = TranslationMode.LISTEN
@@ -92,6 +95,7 @@ class MeetingTranslatorApp(QWidget):
         # 信号
         self.signals = TranslationSignals()
         self.signals.translation_received.connect(self.on_translation_received)
+        self.signals.error_occurred.connect(self.on_service_error)
 
         # 运行状态
         self.is_running = False
@@ -238,9 +242,7 @@ class MeetingTranslatorApp(QWidget):
         voice_label.setObjectName("subtitleLabel")
         speak_layout.addWidget(voice_label)
         self.voice_combo = QComboBox()
-        self.voice_combo.addItem("👩 女声 (Cherry)", "Cherry")
-        self.voice_combo.addItem("👨 男声 (Nofish)", "Nofish")
-        self.voice_combo.setCurrentIndex(0)  # 默认女声
+        self._load_provider_voices()  # 动态加载提供商支持的声音
         self.voice_combo.currentIndexChanged.connect(self.on_voice_changed)
         speak_layout.addWidget(self.voice_combo)
 
@@ -466,6 +468,33 @@ class MeetingTranslatorApp(QWidget):
                 logger.info(f"自动选择虚拟设备: {device['name']}")
                 return
 
+    def _load_provider_voices(self):
+        """加载当前提供商支持的声音"""
+        from translation_client_factory import TranslationClientFactory
+
+        self.voice_combo.clear()
+        voices = TranslationClientFactory.get_supported_voices(self.provider)
+
+        if not voices:
+            # 如果提供商没有定义声音，使用默认值
+            logger.warning(f"提供商 {self.provider} 没有定义声音，使用默认值")
+            self.voice_combo.addItem("默认声音", "")
+            return
+
+        # 添加所有支持的声音
+        for voice_id, voice_name in voices.items():
+            self.voice_combo.addItem(voice_name, voice_id)
+
+        # 尝试从环境变量或配置文件恢复上次选择的声音
+        saved_voice = self.config_manager.get_voice()
+        if saved_voice:
+            for i in range(self.voice_combo.count()):
+                if self.voice_combo.itemData(i) == saved_voice:
+                    self.voice_combo.setCurrentIndex(i)
+                    break
+
+        logger.info(f"已加载 {self.provider} 提供商的 {len(voices)} 个声音")
+
     def load_config(self):
         """加载保存的配置"""
         logger.info("=" * 60)
@@ -604,7 +633,9 @@ class MeetingTranslatorApp(QWidget):
             on_translation=self.on_listen_translation,
             source_language="en",
             target_language="zh",
-            audio_enabled=False  # 仅字幕
+            audio_enabled=False,  # 仅字幕
+            provider=self.provider,
+            on_error=self.on_service_error_callback
         )
         self.listen_translation_service.start()
 
@@ -674,7 +705,9 @@ class MeetingTranslatorApp(QWidget):
                 target_language="en",
                 audio_enabled=True,  # 启用音频
                 voice=selected_voice,
-                on_audio_chunk=self.speak_audio_output.write_audio_chunk  # 写入虚拟麦克风
+                on_audio_chunk=self.speak_audio_output.write_audio_chunk,  # 写入虚拟麦克风
+                provider=self.provider,
+                on_error=self.on_service_error_callback
             )
             logger.info("翻译服务已创建，正在启动...")
             self.speak_translation_service.start()
@@ -850,6 +883,45 @@ class MeetingTranslatorApp(QWidget):
         # 更新字幕窗口
         if self.subtitle_window:
             self.subtitle_window.update_subtitle(source_text, target_text, is_final=is_final)
+
+    def on_service_error_callback(self, error_message: str, exception: Exception):
+        """
+        服务错误回调（在服务线程中调用）
+        发送信号到主线程进行UI更新
+
+        Args:
+            error_message: 用户友好的错误消息
+            exception: 原始异常对象
+        """
+        logger.error(f"服务错误: {error_message}")
+        # 发送信号到主线程
+        self.signals.error_occurred.emit(error_message, exception)
+
+    def on_service_error(self, error_message: str, exception: Exception):
+        """
+        服务错误处理（在主线程中调用）
+        显示错误对话框并停止翻译服务
+
+        Args:
+            error_message: 用户友好的错误消息
+            exception: 原始异常对象
+        """
+        from PyQt5.QtWidgets import QMessageBox
+
+        # 停止翻译服务（如果正在运行）
+        if self.is_running:
+            self.stop_translation()
+
+        # 显示错误对话框
+        msg_box = QMessageBox(self)
+        msg_box.setIcon(QMessageBox.Critical)
+        msg_box.setWindowTitle("翻译服务错误")
+        msg_box.setText(error_message)
+        msg_box.setStandardButtons(QMessageBox.Ok)
+        msg_box.exec_()
+
+        # 更新状态
+        self.update_status("错误：服务启动失败", "error")
 
     def closeEvent(self, event):
         """关闭事件"""
