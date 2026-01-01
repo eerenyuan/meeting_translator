@@ -5,6 +5,7 @@
 
 import sys
 import os
+import platform
 import logging
 from datetime import datetime
 
@@ -111,6 +112,28 @@ class MeetingTranslatorApp(QWidget):
         # 配置加载完成，允许自动保存
         self.is_loading_config = False
 
+    @staticmethod
+    def get_virtual_audio_device_name():
+        """获取当前平台的虚拟音频设备名称"""
+        system = platform.system()
+        if system == "Darwin":  # macOS
+            return "BlackHole"
+        elif system == "Windows":
+            return "Voicemeeter"
+        else:  # Linux or others
+            return "虚拟音频设备"
+
+    @staticmethod
+    def get_virtual_audio_device_pattern():
+        """获取当前平台用于设备匹配的模式列表"""
+        system = platform.system()
+        if system == "Darwin":  # macOS
+            return ["BlackHole"]
+        elif system == "Windows":
+            return ["Voicemeeter Input", "VoiceMeeter Input"]
+        else:  # Linux or others
+            return []
+
     def load_stylesheet(self):
         """加载 QSS 样式表"""
         import platform
@@ -202,7 +225,8 @@ class MeetingTranslatorApp(QWidget):
         speak_layout.addWidget(self.speak_input_combo)
 
         # 英文虚拟麦克风输出
-        speak_output_label = QLabel("🔊 英文虚拟麦克风输出（Voicemeeter）:")
+        device_name = self.get_virtual_audio_device_name()
+        speak_output_label = QLabel(f"🔊 英文虚拟麦克风输出（{device_name}）:")
         speak_output_label.setObjectName("subtitleLabel")
         speak_layout.addWidget(speak_output_label)
         self.speak_output_combo = QComboBox()
@@ -265,13 +289,14 @@ class MeetingTranslatorApp(QWidget):
         layout.addWidget(status_group)
 
         # 帮助信息
-        help_label = QLabel("""
+        device_name = self.get_virtual_audio_device_name()
+        help_label = QLabel(f"""
         <b>📖 使用说明:</b><br>
         <b>👂 听模式</b>: 捕获会议音频（英文）→显示中文字幕（适合听英文会议）<br>
         <b>🎤 说模式</b>: 捕获中文麦克风→输出英文到虚拟麦克风（适合说中文参会）<br>
         <b>🔄 双向模式</b>: 同时运行听+说（完整双向同传）<br>
         <br>
-        <b>💡 提示:</b> 说模式需要安装 Voicemeeter 虚拟音频设备
+        <b>💡 提示:</b> 说模式需要安装 {device_name} 虚拟音频设备
         """)
         help_label.setWordWrap(True)
         help_label.setObjectName("infoLabel")
@@ -385,21 +410,22 @@ class MeetingTranslatorApp(QWidget):
             if not device.get('is_loopback') and not device.get('is_wasapi_loopback'):
                 self.speak_input_combo.addItem(device['name'], device)
 
-        # 3. 加载说模式输出设备（虚拟麦克风，如 Voicemeeter Input）
+        # 3. 加载说模式输出设备（虚拟麦克风，如 Voicemeeter Input 或 BlackHole）
         output_devices = self.device_manager.get_output_devices()
         self.speak_output_combo.clear()
+        device_patterns = self.get_virtual_audio_device_pattern()
 
         for device in output_devices:
             display_name = device['name']
-            # 优先推荐索引 14（测试验证可用）
-            if device['index'] == 14:
+            # 优先推荐索引 14（测试验证可用 - Windows only）
+            if device['index'] == 14 and platform.system() == "Windows":
                 display_name += " [推荐-已验证]"
-            elif 'Voicemeeter Input' in device['name']:
+            elif any(pattern in device['name'] for pattern in device_patterns):
                 display_name += " [推荐]"
             self.speak_output_combo.addItem(display_name, device)
 
-        # 自动选择 VoiceMeeter
-        self._auto_select_voicemeeter(self.speak_output_combo)
+        # 自动选择虚拟音频设备
+        self._auto_select_virtual_device(self.speak_output_combo)
 
     def _auto_select_loopback(self, combo: QComboBox):
         """自动选择 Loopback 设备"""
@@ -419,22 +445,25 @@ class MeetingTranslatorApp(QWidget):
                 logger.info(f"自动选择 Loopback: {device['name']}")
                 return
 
-    def _auto_select_voicemeeter(self, combo: QComboBox):
-        """自动选择 VoiceMeeter Input（优先索引 14 的设备）"""
-        # 优先选择索引 14（测试结果显示能正常工作）
-        for i in range(combo.count()):
-            device = combo.itemData(i)
-            if device['index'] == 14:
-                combo.setCurrentIndex(i)
-                logger.info(f"自动选择 VoiceMeeter（索引 14）: {device['name']}")
-                return
+    def _auto_select_virtual_device(self, combo: QComboBox):
+        """自动选择虚拟音频设备（Voicemeeter/BlackHole等）"""
+        device_patterns = self.get_virtual_audio_device_pattern()
 
-        # 备选：任何 Voicemeeter Input
+        # Windows: 优先选择索引 14（测试结果显示能正常工作）
+        if platform.system() == "Windows":
+            for i in range(combo.count()):
+                device = combo.itemData(i)
+                if device['index'] == 14:
+                    combo.setCurrentIndex(i)
+                    logger.info(f"自动选择虚拟设备（索引 14）: {device['name']}")
+                    return
+
+        # 备选：任何匹配的虚拟音频设备
         for i in range(combo.count()):
             device = combo.itemData(i)
-            if 'Voicemeeter Input' in device['name']:
+            if any(pattern in device['name'] for pattern in device_patterns):
                 combo.setCurrentIndex(i)
-                logger.info(f"自动选择 VoiceMeeter: {device['name']}")
+                logger.info(f"自动选择虚拟设备: {device['name']}")
                 return
 
     def load_config(self):
