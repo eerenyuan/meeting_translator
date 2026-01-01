@@ -113,12 +113,30 @@ class MeetingTranslatorApp(QWidget):
 
     def load_stylesheet(self):
         """加载 QSS 样式表"""
+        import platform
         style_path = os.path.join(os.path.dirname(__file__), "styles", "modern_style.qss")
         try:
             with open(style_path, 'r', encoding='utf-8') as f:
                 stylesheet = f.read()
+
+                # 根据操作系统设置字体
+                system = platform.system()
+                if system == "Darwin":  # macOS
+                    # Use Helvetica Neue which handles Chinese and emoji better with bold
+                    font_family = '"Helvetica Neue", "PingFang SC", "Apple Color Emoji", sans-serif'
+                elif system == "Windows":
+                    font_family = '"Microsoft YaHei UI", "Segoe UI Emoji", "Segoe UI", sans-serif'
+                else:  # Linux or others
+                    font_family = '"Segoe UI", "Noto Color Emoji", sans-serif'
+
+                # 替换样式表中的字体定义
+                stylesheet = stylesheet.replace(
+                    '"PingFang SC", "Microsoft YaHei UI", "Segoe UI", "Apple Color Emoji", sans-serif',
+                    font_family
+                )
+
                 self.setStyleSheet(stylesheet)
-                logger.info("已加载现代化样式表")
+                logger.info(f"已加载现代化样式表 (字体: {font_family})")
         except Exception as e:
             logger.warning(f"无法加载样式表: {e}，使用默认样式")
 
