@@ -184,7 +184,7 @@ cd meeting_translator && python main_app.py
 | 提供商 | 特点 | 配置方式 |
 |--------|------|---------|
 | **阿里云 DashScope** | 默认，针对中英互译优化 | `TRANSLATION_PROVIDER=aliyun` |
-| **OpenAI Realtime API** | GPT-4o 驱动，支持多语言 | `TRANSLATION_PROVIDER=openai` |
+| **OpenAI Realtime API** | GPT-realtime 驱动，支持多语言 | `TRANSLATION_PROVIDER=openai` |
 
 **切换步骤：**
 1. 编辑 `.env` 文件
