@@ -9,8 +9,7 @@ import os
 import logging
 from typing import Callable, Optional
 
-from livetranslate_client import LiveTranslateClient
-from livetranslate_text_client import LiveTranslateTextClient
+from translation_client_factory import TranslationClientFactory
 
 logger = logging.getLogger(__name__)
 
@@ -25,20 +24,22 @@ class MeetingTranslationService:
         source_language: str = "en",
         target_language: str = "zh",
         audio_enabled: bool = False,
-        voice: Optional[str] = "Cherry",
-        on_audio_chunk: Optional[Callable[[bytes], None]] = None
+        voice: Optional[str] = None,
+        on_audio_chunk: Optional[Callable[[bytes], None]] = None,
+        provider: Optional[str] = None
     ):
         """
         初始化翻译服务
 
         Args:
-            api_key: 阿里云 API Key
+            api_key: API Key（或通过环境变量自动获取）
             on_translation: 翻译回调 (source_text, target_text, is_final)
             source_language: 源语言（默认英文）
             target_language: 目标语言（默认中文）
             audio_enabled: 是否启用音频输出（说模式需要）
-            voice: 语音选择（Cherry/Bella/Alice）
-            on_audio_chunk: 音频数据回调（接收 24kHz PCM）
+            voice: 语音选择（provider-specific，或自动使用默认值）
+            on_audio_chunk: 音频数据回调
+            provider: 翻译服务提供商（aliyun/openai，默认从环境变量读取）
         """
         self.api_key = api_key
         self.on_translation = on_translation
@@ -47,6 +48,7 @@ class MeetingTranslationService:
         self.audio_enabled = audio_enabled
         self.voice = voice
         self.on_audio_chunk = on_audio_chunk
+        self.provider = provider
 
         self.client = None
         self.is_running = False
@@ -65,25 +67,17 @@ class MeetingTranslationService:
             # ！重要：先设置 is_running，避免竞态条件
             self.is_running = True
 
-            # 根据模式创建不同的客户端
-            if self.audio_enabled:
-                # 语音模式：使用完整的 LiveTranslateClient（支持音频输出）
-                logger.info("创建语音翻译客户端（audio_enabled=True）")
-                self.client = LiveTranslateClient(
-                    api_key=self.api_key,
-                    source_language=self.source_language,
-                    target_language=self.target_language,
-                    audio_enabled=True,
-                    voice=self.voice or "Cherry"
-                )
-            else:
-                # 纯文本模式：使用 LiveTranslateTextClient（仅文本输出）
-                logger.info("创建文本翻译客户端（audio_enabled=False）")
-                self.client = LiveTranslateTextClient(
-                    api_key=self.api_key,
-                    source_language=self.source_language,
-                    target_language=self.target_language
-                )
+            # 使用工厂模式创建客户端（支持多个提供商）
+            logger.info(f"创建翻译客户端（provider={self.provider or 'auto'}, audio_enabled={self.audio_enabled}）")
+            self.client = TranslationClientFactory.create_client(
+                provider=self.provider,
+                api_key=self.api_key,
+                source_language=self.source_language,
+                target_language=self.target_language,
+                voice=self.voice,
+                audio_enabled=self.audio_enabled,
+                glossary_file=None
+            )
 
             # 连接到服务
             await self.client.connect()
@@ -186,23 +180,16 @@ class MeetingTranslationService:
                     except:
                         pass
 
-                    # 重新创建客户端
-                    if self.audio_enabled:
-                        from livetranslate_client import LiveTranslateClient
-                        self.client = LiveTranslateClient(
-                            api_key=self.api_key,
-                            source_language=self.source_language,
-                            target_language=self.target_language,
-                            audio_enabled=True,
-                            voice=self.voice or "Cherry"
-                        )
-                    else:
-                        from livetranslate_text_client import LiveTranslateTextClient
-                        self.client = LiveTranslateTextClient(
-                            api_key=self.api_key,
-                            source_language=self.source_language,
-                            target_language=self.target_language
-                        )
+                    # 重新创建客户端（使用工厂模式）
+                    self.client = TranslationClientFactory.create_client(
+                        provider=self.provider,
+                        api_key=self.api_key,
+                        source_language=self.source_language,
+                        target_language=self.target_language,
+                        voice=self.voice,
+                        audio_enabled=self.audio_enabled,
+                        glossary_file=None
+                    )
 
                     # 重新连接
                     await self.client.connect()
@@ -349,8 +336,10 @@ class MeetingTranslationServiceWrapper:
         source_language: str = "en",
         target_language: str = "zh",
         audio_enabled: bool = False,
-        voice: Optional[str] = "Cherry",
-        on_audio_chunk: Optional[Callable[[bytes], None]] = None
+        voice: Optional[str] = None,
+        on_audio_chunk: Optional[Callable[[bytes], None]] = None,
+        provider: Optional[str] = None,
+        on_error: Optional[Callable[[str, Exception], None]] = None
     ):
         self.api_key = api_key
         self.on_translation = on_translation
@@ -359,11 +348,14 @@ class MeetingTranslationServiceWrapper:
         self.audio_enabled = audio_enabled
         self.voice = voice
         self.on_audio_chunk = on_audio_chunk
+        self.provider = provider
+        self.on_error = on_error
 
         self.service = None
         self.loop = None
         self.thread = None
         self.is_running = False
+        self.startup_error = None
 
     def start(self):
         """启动翻译服务（同步方法）"""
@@ -379,22 +371,34 @@ class MeetingTranslationServiceWrapper:
         def run_loop():
             asyncio.set_event_loop(self.loop)
 
-            # 创建翻译服务
-            self.service = MeetingTranslationService(
-                api_key=self.api_key,
-                on_translation=self.on_translation,
-                source_language=self.source_language,
-                target_language=self.target_language,
-                audio_enabled=self.audio_enabled,
-                voice=self.voice,
-                on_audio_chunk=self.on_audio_chunk
-            )
+            try:
+                # 创建翻译服务
+                self.service = MeetingTranslationService(
+                    api_key=self.api_key,
+                    on_translation=self.on_translation,
+                    source_language=self.source_language,
+                    target_language=self.target_language,
+                    audio_enabled=self.audio_enabled,
+                    voice=self.voice,
+                    on_audio_chunk=self.on_audio_chunk,
+                    provider=self.provider
+                )
 
-            # 启动翻译服务
-            self.loop.run_until_complete(self.service.start())
+                # 启动翻译服务
+                self.loop.run_until_complete(self.service.start())
 
-            # 运行事件循环
-            self.loop.run_forever()
+                # 运行事件循环
+                self.loop.run_forever()
+
+            except Exception as e:
+                logger.error(f"翻译服务启动失败: {e}")
+                self.startup_error = e
+                self.is_running = False
+
+                # 调用错误回调（如果提供）
+                if self.on_error:
+                    error_message = self._format_error_message(e)
+                    self.on_error(error_message, e)
 
         self.thread = threading.Thread(target=run_loop, daemon=True)
         self.thread.start()
@@ -461,6 +465,48 @@ class MeetingTranslationServiceWrapper:
         self.thread = None
 
         logger.info("翻译服务包装器已停止")
+
+    def _format_error_message(self, error: Exception) -> str:
+        """
+        格式化错误消息，提供用户友好的提示
+
+        Args:
+            error: 异常对象
+
+        Returns:
+            用户友好的错误消息
+        """
+        error_str = str(error)
+        provider_name = self.provider or "aliyun"
+
+        # 检查是否是认证错误（HTTP 401）
+        if "401" in error_str or "unauthorized" in error_str.lower():
+            # 根据提供商给出具体的API Key环境变量名
+            if provider_name == "openai":
+                key_name = "OPENAI_API_KEY"
+                key_url = "https://platform.openai.com/api-keys"
+            elif provider_name == "aliyun" or provider_name == "alibaba":
+                key_name = "DASHSCOPE_API_KEY 或 ALIYUN_API_KEY"
+                key_url = "https://dashscope.console.aliyun.com/"
+            else:
+                key_name = f"{provider_name.upper()}_API_KEY"
+                key_url = ""
+
+            message = f"认证失败 (HTTP 401)：API Key 无效或未设置\n\n"
+            message += f"提供商: {provider_name}\n"
+            message += f"请检查 .env 文件中的 {key_name} 是否正确设置\n\n"
+            if key_url:
+                message += f"获取 API Key: {key_url}"
+
+            return message
+
+        # 检查是否是连接错误
+        elif "connection" in error_str.lower() or "timeout" in error_str.lower():
+            return f"连接失败：无法连接到 {provider_name} 服务\n\n请检查网络连接"
+
+        # 其他错误
+        else:
+            return f"服务启动失败\n\n提供商: {provider_name}\n错误: {error_str}"
 
     def send_audio_chunk(self, audio_data: bytes):
         """发送音频数据块（同步方法）"""
