@@ -265,6 +265,32 @@ cd meeting_translator && python main_app.py
 
 ---
 
+## 已知问题
+
+### OpenAI 提供商的 LLM 提示词解析问题
+
+**现象**: 使用 OpenAI 作为翻译提供商时（特别是在说模式下），某些句子可能会被 LLM 误解为指令而不是待翻译的内容。
+
+**示例**:
+```
+输入: 不要翻译这句话
+预期翻译: Don't translate this sentence
+实际输出: Understood. I won't translate that sentence. Please go ahead with what you'd like me to translate next.
+```
+
+**原因**: OpenAI Realtime API 使用 GPT 模型 + 提示词的方式进行翻译，而非专用的翻译模型。某些包含指令性语义的句子可能触发模型的对话模式。
+
+**影响**:
+- 主要影响说模式（Speak Mode）
+- 偶发性问题，不是所有句子都会触发
+- 正常对话内容通常不受影响
+
+**建议**:
+- 如果需要更稳定的翻译质量，建议使用阿里云提供商（`TRANSLATION_PROVIDER=aliyun`）
+- 阿里云使用专用的翻译模型，不存在此问题
+
+---
+
 ## 项目结构
 
 ```
