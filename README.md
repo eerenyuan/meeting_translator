@@ -50,9 +50,11 @@
 
 ### 前置要求
 
-1. **操作系统**: Windows 10/11
+1. **操作系统**: Windows 10/11, macOS
 2. **Python**: 3.9 - 3.11
-3. **虚拟音频设备**: [Voicemeeter](https://voicemeeter.com/)
+3. **虚拟音频设备**:
+   - Windows: [Voicemeeter](https://voicemeeter.com/)
+   - macOS: BlackHole
 4. **API Key**: 阿里云 DashScope API（[申请地址](https://dashscope.console.aliyun.com/)）
 
 ### 安装步骤
@@ -68,7 +70,12 @@ cd meeting_translator
 
 ```bash
 python -m venv .venv
-.venv\Scripts\activate  # Windows
+
+# Windows
+.venv\Scripts\activate
+
+# macOS
+source .venv/bin/activate
 ```
 
 #### 3. 安装依赖
@@ -83,9 +90,17 @@ pip install -r requirements.txt
 > pipwin install pyaudio
 > ```
 
-#### 4. 安装 Voicemeeter
+#### 4. 安装虚拟音频驱动
+
+**Windows用户：**
 
 下载并安装 [Voicemeeter](https://voicemeeter.com/)（推荐 Voicemeeter Banana 或 Potato 版本），安装后重启电脑。
+
+**macOS用户：**
+
+```bash
+brew install portaudio blackhole-2ch
+```
 
 #### 5. 配置环境变量
 
@@ -105,8 +120,12 @@ cp .env.example .env
 run.bat
 
 # 方法2: 手动运行
-cd meeting_translator
-python main_app.py
+cd meeting_translator && python main_app.py
+```
+
+**macOS**:
+```bash
+cd meeting_translator && python main_app.py
 ```
 
 ---
@@ -116,13 +135,19 @@ python main_app.py
 ### 基本使用
 
 1. **启动程序**
+
+   **Windows**:
    ```bash
-   # Windows: 使用批处理文件
+   # 方法1: 使用批处理文件（推荐）
    run.bat
 
-   # 或手动运行
-   cd meeting_translator
-   python main_app.py
+   # 方法2: 手动运行
+   cd meeting_translator && python main_app.py
+   ```
+
+   **macOS**:
+   ```bash
+   cd meeting_translator && python main_app.py
    ```
 
 2. **选择模式**

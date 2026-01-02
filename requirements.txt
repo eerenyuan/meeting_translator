@@ -3,8 +3,9 @@
 
 # Core Dependencies
 # 核心依赖
+numpy==1.24.3                       # 数值计算库
 pyaudio==0.2.14                    # 音频输入输出
-pyaudiowpatch==0.2.12.13           # PyAudio WASAPI 补丁 (Windows)
+pyaudiowpatch==0.2.12.13 ; sys_platform == "win32"           # PyAudio WASAPI 补丁 (Windows)
 websockets==12.0                    # WebSocket 客户端
 python-dotenv==1.0.0               # 环境变量管理
 

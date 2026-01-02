@@ -5,7 +5,7 @@
 
 /* ==================== 全局样式 ==================== */
 * {
-    font-family: "Microsoft YaHei UI", "Segoe UI", sans-serif;
+    font-family: "PingFang SC", "Microsoft YaHei UI", "Segoe UI", "Apple Color Emoji", sans-serif;
     font-size: 10pt;
 }
 
@@ -113,16 +113,10 @@ QComboBox::drop-down {
     width: 30px;
 }
 
+/* Use native system arrow on macOS, custom on other platforms */
 QComboBox::down-arrow {
-    image: url(none);
-    border-left: 5px solid transparent;
-    border-right: 5px solid transparent;
-    border-top: 6px solid #757575;
-    margin-right: 8px;
-}
-
-QComboBox::down-arrow:hover {
-    border-top-color: #2196F3;
+    width: 12px;
+    height: 12px;
 }
 
 QComboBox QAbstractItemView {

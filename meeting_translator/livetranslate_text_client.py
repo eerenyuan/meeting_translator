@@ -66,7 +66,7 @@ class LiveTranslateTextClient:
         try:
             self.ws = await websockets.connect(
                 self.api_url,
-                additional_headers=headers
+                extra_headers=headers
             )
             self.is_connected = True
             print(f"[OK] 已连接到: {self.api_url}")
