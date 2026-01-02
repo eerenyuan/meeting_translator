@@ -13,7 +13,7 @@
 - 🎯 **完全本地运行**：只在你的电脑上，其他参会者无感知，不需要任何配合
 - 🌐 **会议软件无关**：支持 Zoom、Teams、Google Meet、腾讯会议等所有会议平台
 - ⚡ **真正零延迟**：<500ms 端到端延迟，不打断对话节奏
-- 🔄 **模型无关架构**：可随时切换更好的翻译服务
+- 🔄 **多提供商支持**：支持阿里云、OpenAI 等多个翻译服务，可随时切换
 - 🎭 **虚拟化身模式**：通过"Mike"这样的虚拟角色，让资深专家用中文自信表达
 
 ---
@@ -55,7 +55,9 @@
 3. **虚拟音频设备**:
    - Windows: [Voicemeeter](https://voicemeeter.com/)
    - macOS: BlackHole
-4. **API Key**: 阿里云 DashScope API（[申请地址](https://dashscope.console.aliyun.com/)）
+4. **翻译服务 API Key** (选择其一):
+   - **阿里云 DashScope** (默认): [申请地址](https://dashscope.console.aliyun.com/)
+   - **OpenAI Realtime API**: [申请地址](https://platform.openai.com/api-keys)
 
 ### 安装步骤
 
@@ -108,8 +110,19 @@ brew install portaudio blackhole-2ch
 # 复制配置模板
 cp .env.example .env
 
-# 编辑 .env 文件，填入你的 API Key
-# DASHSCOPE_API_KEY=your_api_key_here
+# 编辑 .env 文件，配置翻译服务提供商和 API Key
+```
+
+**使用阿里云（默认）：**
+```bash
+TRANSLATION_PROVIDER=aliyun
+DASHSCOPE_API_KEY=your_dashscope_api_key_here
+```
+
+**使用 OpenAI：**
+```bash
+TRANSLATION_PROVIDER=openai
+OPENAI_API_KEY=your_openai_api_key_here
 ```
 
 #### 6. 运行程序
@@ -163,6 +176,23 @@ cd meeting_translator && python main_app.py
    - 听模式：看屏幕字幕，实时理解对方说的英文
 
 ### 高级功能
+
+#### 切换翻译服务提供商
+
+系统支持多个翻译服务提供商，可通过配置文件轻松切换：
+
+| 提供商 | 特点 | 配置方式 |
+|--------|------|---------|
+| **阿里云 DashScope** | 默认，针对中英互译优化 | `TRANSLATION_PROVIDER=aliyun` |
+| **OpenAI Realtime API** | GPT-realtime 驱动，支持多语言 | `TRANSLATION_PROVIDER=openai` |
+
+**切换步骤：**
+1. 编辑 `.env` 文件
+2. 修改 `TRANSLATION_PROVIDER` 设置
+3. 配置对应的 API Key
+4. 重启程序
+
+> 注意：不同提供商支持的语音选项不同，切换后请在界面中选择合适的语音。
 
 #### 自定义术语库
 
@@ -239,16 +269,20 @@ cd meeting_translator && python main_app.py
 
 ```
 meeting_translator/
-├── meeting_translator/       # 核心程序
-│   ├── main_app.py          # 主程序入口
-│   ├── translation_service.py   # 翻译服务
-│   ├── audio_capture_thread.py  # 音频捕获
-│   ├── audio_output_thread.py   # 音频输出
-│   ├── subtitle_window.py   # 字幕窗口
-│   ├── glossary.json        # 术语库
-│   └── styles/              # UI样式
-├── docs/                    # 文档
-├── .env.example             # 配置模板
+├── meeting_translator/              # 核心程序
+│   ├── main_app.py                 # 主程序入口
+│   ├── translation_service.py      # 翻译服务封装
+│   ├── translation_client_base.py  # 翻译客户端基类
+│   ├── translation_client_factory.py # 客户端工厂
+│   ├── livetranslate_client.py     # 阿里云客户端
+│   ├── openai_realtime_client.py   # OpenAI 客户端
+│   ├── audio_capture_thread.py     # 音频捕获
+│   ├── audio_output_thread.py      # 音频输出
+│   ├── subtitle_window.py          # 字幕窗口
+│   ├── glossary.json               # 术语库
+│   └── styles/                     # UI样式
+├── docs/                           # 文档
+├── .env.example                    # 配置模板
 ├── .gitignore
 ├── requirements.txt
 └── README.md
@@ -270,7 +304,8 @@ meeting_translator/
 
 ## 致谢
 
-- 感谢阿里云通义千问团队提供的实时翻译API
+- 感谢阿里云通义千问团队提供的实时翻译 API
+- 感谢 OpenAI 提供的 Realtime API
 - 感谢 VB-Audio 提供的 Voicemeeter 虚拟音频设备
 
 ---
