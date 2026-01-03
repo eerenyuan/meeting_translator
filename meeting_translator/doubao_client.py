@@ -232,52 +232,59 @@ class DoubaoClient(BaseTranslationClient):
                 response.ParseFromString(message)
                 event_type = response.event
 
+                # Debug: log all received events
+                print(f"[DEBUG] Received event type: {event_type}")
+
                 # Source language recognition (ASR)
                 if event_type == self.EVENT_ASR_START:
-                    pass  # Recognition started
+                    print("[DEBUG] ASR started")
 
                 elif event_type == self.EVENT_ASR_DELTA:
                     # Source language incremental recognition
                     source_text = response.text
+                    print(f"[DEBUG] ASR delta: {source_text}")
                     if source_text and on_text_received:
                         on_text_received(f"[源] {source_text}")
 
                 elif event_type == self.EVENT_ASR_DONE:
-                    pass  # Source recognition complete
+                    print("[DEBUG] ASR done")
 
                 # Translation start
                 elif event_type == self.EVENT_TRANSLATE_START:
-                    pass  # Can trigger callback here
+                    print("[DEBUG] Translation started")
 
                 # Translation delta (incremental text)
                 elif event_type == self.EVENT_TRANSLATE_DELTA:
                     delta = response.text
+                    print(f"[DEBUG] Translation delta: {delta}")
                     if delta and on_text_received:
                         on_text_received(f"[译增量] {delta}")
 
                 # Translation done (complete sentence)
                 elif event_type == self.EVENT_TRANSLATE_DONE:
                     text = response.text
+                    print(f"[DEBUG] Translation done: {text}")
                     if text and on_text_received:
                         on_text_received(f"[译] {text}")
 
                 # Audio synthesis start
                 elif event_type == self.EVENT_AUDIO_START:
-                    pass  # Can trigger callback here
+                    print("[DEBUG] Audio synthesis started")
 
                 # Audio delta (incremental audio data)
                 elif event_type == self.EVENT_AUDIO_DELTA:
                     audio_data = response.data
+                    print(f"[DEBUG] Audio delta: {len(audio_data) if audio_data else 0} bytes")
                     if audio_data and self.audio_enabled:
                         self.audio_playback_queue.put(audio_data)
 
                 # Audio done
                 elif event_type == self.EVENT_AUDIO_DONE:
-                    pass  # Can trigger callback here
+                    print("[DEBUG] Audio synthesis done")
 
                 # Usage/billing info
                 elif event_type == self.EVENT_USAGE:
-                    pass  # Can parse and log billing info
+                    print("[DEBUG] Usage/billing event received")
 
                 # Session finished
                 elif event_type == Type.SessionFinished:
@@ -288,6 +295,10 @@ class DoubaoClient(BaseTranslationClient):
                 elif event_type in [Type.SessionFailed, Type.SessionCanceled]:
                     print(f"[ERROR] Doubao session failed: {response.response_meta.Message}")
                     break
+
+                # Unknown event
+                else:
+                    print(f"[WARN] Unknown event type: {event_type}")
 
         except Exception as e:
             print(f"[ERROR] Doubao message handling error: {e}")
