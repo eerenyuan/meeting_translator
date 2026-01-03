@@ -230,9 +230,18 @@ class DoubaoClient(BaseTranslationClient):
                 response.ParseFromString(message)
                 event_type = response.event
 
-                # Ignore source language recognition events (included in input cost, not needed)
-                if event_type in [self.EVENT_ASR_START, self.EVENT_ASR_DELTA, self.EVENT_ASR_DONE]:
-                    continue
+                # Source language recognition (ASR)
+                if event_type == self.EVENT_ASR_START:
+                    pass  # Recognition started
+
+                elif event_type == self.EVENT_ASR_DELTA:
+                    # Source language incremental recognition
+                    source_text = response.text
+                    if source_text and on_text_received:
+                        on_text_received(f"[源] {source_text}")
+
+                elif event_type == self.EVENT_ASR_DONE:
+                    pass  # Source recognition complete
 
                 # Translation start
                 elif event_type == self.EVENT_TRANSLATE_START:
@@ -242,13 +251,13 @@ class DoubaoClient(BaseTranslationClient):
                 elif event_type == self.EVENT_TRANSLATE_DELTA:
                     delta = response.text
                     if delta and on_text_received:
-                        on_text_received(f"{delta}")
+                        on_text_received(f"[译增量] {delta}")
 
                 # Translation done (complete sentence)
                 elif event_type == self.EVENT_TRANSLATE_DONE:
                     text = response.text
                     if text and on_text_received:
-                        on_text_received(f" ")  # Add space between sentences
+                        on_text_received(f"[译] {text}")
 
                 # Audio synthesis start
                 elif event_type == self.EVENT_AUDIO_START:
