@@ -680,10 +680,12 @@ class MeetingTranslatorApp(QWidget):
         # 使用自适应变速功能，在队列堆积时自动加速播放
         try:
             logger.info("正在创建音频输出线程...")
+            # 使用设备的实际采样率，避免音频失真
+            device_output_rate = output_device.get('sample_rate', 48000)
             self.speak_audio_output = AudioOutputThread(
                 device_index=output_device['index'],
                 input_sample_rate=24000,  # API 输出 24kHz
-                output_sample_rate=24000,  # 直接使用 24kHz，避免重采样问题
+                output_sample_rate=device_output_rate,  # 使用设备实际采样率
                 channels=1,
                 enable_dynamic_speed=True,  # 启用自适应变速
                 max_speed=2.0,  # 最高2倍速
