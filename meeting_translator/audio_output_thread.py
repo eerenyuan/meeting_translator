@@ -246,7 +246,15 @@ class AudioOutputThread:
             audio_data: PCM 音频数据（input_sample_rate=24kHz, 单声道, 16-bit）
         """
         if not self.is_running:
+            logger.warning(f"[AudioOutput] 线程未运行，丢弃 {len(audio_data)} 字节")
             return
+
+        # Debug: Log first 3 chunks received
+        if not hasattr(self, '_chunk_count'):
+            self._chunk_count = 0
+        self._chunk_count += 1
+        if self._chunk_count <= 3:
+            logger.info(f"[AudioOutput] 接收音频块 #{self._chunk_count}, 大小: {len(audio_data)} 字节")
 
         # 注意：为了性能，直接入队原始 24kHz 数据
         # WSOLA 和重采样都在 _output_loop 中批量处理
@@ -313,6 +321,7 @@ class AudioOutputThread:
 
             # 重采样状态（用于批量处理）
             resample_state = None
+            play_count = 0
 
             # 持续写入音频数据
             while self.is_running:
@@ -330,6 +339,11 @@ class AudioOutputThread:
 
                         # 重采样（如果需要）
                         audio_data, resample_state = self._resample_audio(audio_data, resample_state)
+
+                        # Debug: log first 3 plays
+                        play_count += 1
+                        if play_count <= 3:
+                            logger.info(f"[AudioOutput] 播放音频块 #{play_count}, 大小: {len(audio_data)} 字节 (重采样后)")
 
                         # 写入音频流（带错误检测）
                         try:
