@@ -9,6 +9,7 @@ pyaudiowpatch==0.2.12.13 ; sys_platform == "win32"           # PyAudio WASAPI �
 websockets==12.0                    # WebSocket 客户端
 python-dotenv==1.0.0               # 环境变量管理
 protobuf>=4.25.1                   # Protocol Buffers (用于 Doubao API)
+av>=10.0.0                          # PyAV - FFmpeg bindings (用于 Doubao Opus 解码)
 
 # GUI and UI
 # 图形界面

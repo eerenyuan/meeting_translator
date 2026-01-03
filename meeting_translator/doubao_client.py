@@ -17,6 +17,16 @@ except ImportError:
 import queue
 import threading
 from typing import Callable, Optional, Dict
+import io
+
+# Try to import av (PyAV) for Opus decoding
+try:
+    import av
+    AV_AVAILABLE = True
+except ImportError:
+    AV_AVAILABLE = False
+    print("[WARN] PyAV not installed. Doubao audio playback requires PyAV.")
+    print("[WARN] Install with: pip install av")
 
 from translation_client_base import BaseTranslationClient
 from livetranslate_client import load_glossary
@@ -176,8 +186,8 @@ class DoubaoClient(BaseTranslationClient):
 
             # Target audio configuration (only for s2s mode)
             if self.mode == "s2s":
-                request.target_audio.format = "pcm"  # Use PCM for direct playback
-                request.target_audio.rate = self.output_rate
+                request.target_audio.format = "pcm"  # PCM format for direct playback
+                request.target_audio.rate = self.output_rate  # 24000Hz
                 request.target_audio.bits = 16  # 16-bit PCM
                 request.target_audio.channel = 1  # Mono
 
@@ -351,9 +361,50 @@ class DoubaoClient(BaseTranslationClient):
         self.audio_player_thread.start()
         print("[OK] Doubao audio player started")
 
+    def _decode_opus_to_pcm(self, opus_data: bytes) -> bytes:
+        """Decode Opus audio data to PCM using PyAV"""
+        if not AV_AVAILABLE:
+            print("[ERROR] PyAV not available, cannot decode Opus audio")
+            return b''
+
+        try:
+            # Create a BytesIO object from opus data
+            input_stream = io.BytesIO(opus_data)
+
+            # Open container (ogg with opus codec)
+            container = av.open(input_stream, format='ogg')
+
+            # Get audio stream
+            audio_stream = container.streams.audio[0]
+
+            # Decode frames
+            pcm_frames = []
+            for frame in container.decode(audio=0):
+                # Resample to target rate if needed
+                frame = frame.reformat(
+                    format='s16',  # 16-bit signed PCM
+                    layout='mono',  # Mono
+                    rate=self.output_rate  # 24kHz
+                )
+                # Convert to bytes
+                pcm_frames.append(frame.to_ndarray().tobytes())
+
+            container.close()
+
+            # Combine all frames
+            pcm_data = b''.join(pcm_frames)
+            return pcm_data
+
+        except Exception as e:
+            print(f"[ERROR] Opus decode failed: {e}")
+            import traceback
+            traceback.print_exc()
+            return b''  # Return empty data on failure
+
     def _audio_player_task(self):
         """Audio playback thread"""
         stream = None
+        chunk_count = 0
         try:
             stream = self.pyaudio_instance.open(
                 format=self.output_format,
@@ -363,12 +414,24 @@ class DoubaoClient(BaseTranslationClient):
                 frames_per_buffer=self.output_chunk
             )
 
+            print(f"[DEBUG] Audio player opened: {self.output_rate}Hz, {self.channels}ch, format=paInt16")
+
             while True:
                 audio_data = self.audio_playback_queue.get()
                 if audio_data is None:  # Stop signal
                     break
 
-                # Doubao outputs PCM format, write directly
+                chunk_count += 1
+                if chunk_count <= 3:
+                    print(f"[DEBUG] Playing audio chunk #{chunk_count}, size={len(audio_data)} bytes")
+                    # Check if data looks like PCM (samples should be in reasonable range)
+                    if len(audio_data) >= 100:
+                        import struct
+                        samples = struct.unpack(f'<{min(50, len(audio_data)//2)}h', audio_data[:100])
+                        max_sample = max(abs(s) for s in samples)
+                        print(f"[DEBUG] Sample range: max={max_sample} (should be < 32768 for valid PCM)")
+
+                # Doubao should output PCM format, write directly
                 stream.write(audio_data)
 
         except Exception as e:
