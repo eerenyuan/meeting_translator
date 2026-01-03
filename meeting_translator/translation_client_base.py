@@ -14,6 +14,7 @@ class TranslationProvider(Enum):
     OPENAI = "openai"
     GEMINI = "gemini"
     DEEPGRAM_ELEVENLABS = "deepgram_elevenlabs"
+    DOUBAO = "doubao"
 
 
 class BaseTranslationClient(ABC):

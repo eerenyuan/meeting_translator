@@ -10,6 +10,7 @@ from translation_client_base import BaseTranslationClient, TranslationProvider
 from livetranslate_client import LiveTranslateClient
 from livetranslate_text_client import LiveTranslateTextClient
 from openai_realtime_client import OpenAIRealtimeClient
+from doubao_client import DoubaoClient
 
 
 class TranslationClientFactory:
@@ -91,10 +92,27 @@ class TranslationClientFactory:
                 **kwargs
             )
 
+        elif provider == "doubao":
+            # Doubao requires both app_id and access_token
+            access_token = os.getenv("doubao_access_token")
+            if not access_token:
+                raise ValueError("DOUBAO_ACCESS_TOKEN not found in environment")
+
+            return DoubaoClient(
+                api_key=api_key,  # doubao_app_id
+                source_language=source_language,
+                target_language=target_language,
+                voice=voice,
+                audio_enabled=audio_enabled,
+                glossary_file=glossary_file,
+                access_token=access_token,  # doubao_access_token
+                **kwargs
+            )
+
         else:
             raise ValueError(
                 f"Unsupported provider: {provider}. "
-                f"Supported providers: aliyun, openai"
+                f"Supported providers: aliyun, openai, doubao"
             )
 
     @staticmethod
@@ -104,6 +122,7 @@ class TranslationClientFactory:
             "aliyun": ["DASHSCOPE_API_KEY", "ALIYUN_API_KEY"],
             "alibaba": ["DASHSCOPE_API_KEY", "ALIYUN_API_KEY"],
             "openai": ["OPENAI_API_KEY"],
+            "doubao": ["doubao_app_id", "DOUBAO_APP_ID"],
             "gemini": ["GEMINI_API_KEY", "GOOGLE_API_KEY"],
             "deepgram": ["DEEPGRAM_API_KEY"],
             "elevenlabs": ["ELEVENLABS_API_KEY"],
@@ -128,6 +147,7 @@ class TranslationClientFactory:
             "aliyun": "Cherry",
             "alibaba": "Cherry",
             "openai": "alloy",
+            "doubao": "default",
             "gemini": "en-US-Neural2-F",
             "elevenlabs": "EXAVITQu4vr4xnSDxMaL"  # Sarah
         }
@@ -155,6 +175,8 @@ class TranslationClientFactory:
             }
         elif provider == "openai":
             return OpenAIRealtimeClient.get_supported_voices()
+        elif provider == "doubao":
+            return DoubaoClient.get_supported_voices()
         else:
             return {}
 
@@ -168,5 +190,6 @@ class TranslationClientFactory:
         """
         return {
             "aliyun": "Alibaba Cloud (Aliyun)",
-            "openai": "OpenAI Realtime API"
+            "openai": "OpenAI Realtime API",
+            "doubao": "Doubao (ByteDance)"
         }
