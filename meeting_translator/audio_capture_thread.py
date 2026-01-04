@@ -163,6 +163,7 @@ class AudioCaptureThread:
             logger.info("音频流已打开，开始捕获...")
 
             # 持续读取音频数据
+            read_count = 0
             while self.is_running:
                 try:
                     # 读取音频数据
@@ -170,6 +171,13 @@ class AudioCaptureThread:
                         self.chunk_size,
                         exception_on_overflow=False
                     )
+
+                    # Debug: Log first 5 reads
+                    read_count += 1
+                    if read_count <= 5:
+                        logger.info(f"[CAPTURE] Read chunk #{read_count}, size={len(audio_data)} bytes, will_call_callback={self.on_audio_chunk is not None}")
+                    elif read_count == 100:
+                        logger.info(f"[CAPTURE] Read 100 chunks, audio capture is working")
 
                     # 转换音频格式（如果需要）
                     if self.need_resample or self.need_remix:
