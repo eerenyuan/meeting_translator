@@ -269,11 +269,26 @@ class AudioOutputThread:
             if self._chunk_count == 1:
                 try:
                     import tempfile
-                    debug_file = os.path.join(tempfile.gettempdir(), "doubao_audio_chunk1.raw")
-                    with open(debug_file, 'wb') as f:
+                    # Save as both .raw (PCM) and .opus (Opus) for testing
+                    raw_file = os.path.join(tempfile.gettempdir(), "doubao_audio_chunk1.raw")
+                    opus_file = os.path.join(tempfile.gettempdir(), "doubao_audio_chunk1.opus")
+
+                    with open(raw_file, 'wb') as f:
                         f.write(audio_data)
-                    logger.info(f"[AudioOutput] 已保存第一个音频块到: {debug_file}")
-                    logger.info(f"[AudioOutput] 可用命令播放测试: ffplay -f s16le -ar 24000 -ac 1 {debug_file}")
+                    with open(opus_file, 'wb') as f:
+                        f.write(audio_data)
+
+                    logger.info(f"[AudioOutput] 已保存音频块到: {raw_file}")
+                    logger.info(f"[AudioOutput] 测试PCM: ffplay -f s16le -ar 24000 {raw_file}")
+                    logger.info(f"[AudioOutput] 测试Opus: ffplay {opus_file}")
+
+                    # Check file header to detect format
+                    if len(audio_data) >= 8:
+                        header_hex = ' '.join(f'{b:02x}' for b in audio_data[:8])
+                        logger.info(f"[AudioOutput] 文件头: {header_hex}")
+                        # Opus in Ogg: "4f 67 67 53" (OggS)
+                        if audio_data[:4] == b'OggS':
+                            logger.warning(f"[AudioOutput] 检测到Ogg容器，Doubao可能返回的是Opus而非PCM！")
                 except Exception as e:
                     logger.warning(f"[AudioOutput] 保存调试文件失败: {e}")
 
