@@ -1,8 +1,16 @@
 {
-  "description": "Translation glossary for meeting translator",
+  "description": "Translation glossary for meeting translator (Doubao AST API)",
   "glossary": {
     "示例公司": "Example Company",
     "核心产品": "Core Product",
-    "业务系统": "Business System"
+    "业务系统": "Business System",
+    "人工智能": "Artificial Intelligence",
+    "机器学习": "Machine Learning",
+    "深度学习": "Deep Learning",
+    "自然语言处理": "Natural Language Processing",
+    "语音识别": "Speech Recognition",
+    "同声传译": "Simultaneous Interpretation",
+    "豆包": "Doubao",
+    "字节跳动": "ByteDance"
   }
 }

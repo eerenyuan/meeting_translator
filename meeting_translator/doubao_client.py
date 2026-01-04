@@ -197,6 +197,13 @@ class DoubaoClient(BaseTranslationClient):
             request.request.source_language = self.source_language
             request.request.target_language = self.target_language
 
+            # Configure corpus (glossary, hot words, etc.)
+            if self.glossary:
+                # Set glossary_list (map<string, string>)
+                for source_term, target_term in self.glossary.items():
+                    request.request.corpus.glossary_list[source_term] = target_term
+                print(f"[OK] Loaded {len(self.glossary)} glossary terms into Doubao corpus")
+
             await self.ws.send(request.SerializeToString())
 
             # Wait for SessionStarted response
