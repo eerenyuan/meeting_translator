@@ -126,40 +126,25 @@ class MeetingTranslationService:
 
         logger.info("停止翻译服务...")
 
+        # 立即设置停止标志，让_run_with_auto_reconnect自然退出
         self.is_running = False
 
-        # 清空客户端的音频播放队列，避免停止时播放积压内容
-        if self.client and hasattr(self.client, 'audio_playback_queue'):
-            cleared = 0
-            queue_size = self.client.audio_playback_queue.qsize()
-            while not self.client.audio_playback_queue.empty():
-                try:
-                    self.client.audio_playback_queue.get_nowait()
-                    cleared += 1
-                except:
-                    break
-            if cleared > 0:
-                logger.info(f"已清空客户端音频队列中的 {cleared}/{queue_size} 个音频块（停止前积压）")
-
-        # 取消消息处理任务
-        if self.message_task:
+        # 取消消息处理任务（如果存在）
+        if self.message_task and not self.message_task.done():
+            logger.debug("取消消息处理任务...")
             self.message_task.cancel()
             try:
                 await asyncio.wait_for(self.message_task, timeout=2.0)
-            except (asyncio.CancelledError, asyncio.TimeoutError):
                 logger.debug("消息处理任务已取消")
+            except asyncio.CancelledError:
+                logger.debug("消息任务被成功取消")
+            except asyncio.TimeoutError:
+                logger.warning("取消消息任务超时")
             except Exception as e:
                 logger.debug(f"取消消息任务时出错: {e}")
 
-        # 关闭客户端
-        if self.client:
-            try:
-                await asyncio.wait_for(self.client.close(), timeout=2.0)
-                logger.debug("WebSocket 客户端已关闭")
-            except asyncio.TimeoutError:
-                logger.warning("关闭 WebSocket 超时")
-            except Exception as e:
-                logger.debug(f"关闭客户端时出错: {e}")
+        # 注意：不关闭client，让_run_with_auto_reconnect在检测到is_running=False后自然退出
+        # 这样避免了与重连逻辑的race condition
 
         logger.info("翻译服务已停止")
 
@@ -209,11 +194,21 @@ class MeetingTranslationService:
                     logger.info(f"等待 {reconnect_delay} 秒后重连（第 {reconnect_count}/{max_reconnect_attempts} 次）...")
                     await asyncio.sleep(reconnect_delay)
 
+                    # 再次检查是否应该停止（可能在sleep期间调用了stop）
+                    if not self.is_running:
+                        logger.info("[STOP] 在重连延迟期间检测到停止信号，退出重连逻辑")
+                        break
+
                     # 关闭旧连接
                     try:
                         await self.client.close()
                     except:
                         pass
+
+                    # 再次检查是否应该停止
+                    if not self.is_running:
+                        logger.info("[STOP] 在关闭旧连接后检测到停止信号，退出重连逻辑")
+                        break
 
                     # 重新创建客户端（使用工厂模式）
                     self.client = TranslationClientFactory.create_client(
@@ -228,6 +223,12 @@ class MeetingTranslationService:
 
                     # 重新连接
                     await self.client.connect()
+
+                    # 再次检查是否应该停止
+                    if not self.is_running:
+                        logger.info("[STOP] 在建立新连接后检测到停止信号，退出重连逻辑")
+                        break
+
                     logger.info("重连成功（自动）")
 
                     # 重置重连计数
@@ -314,26 +315,18 @@ class MeetingTranslationService:
         import threading
         import queue
 
-        audio_chunk_count = [0]  # 使用列表以便在闭包中修改
-
         def forward_loop():
             """音频转发循环（在独立线程中运行）"""
-            logger.info("[音频转发] 转发循环已启动")
-
             while self.is_running:
                 try:
                     # 从 API 客户端的队列获取音频数据
                     audio_data = self.client.audio_playback_queue.get(timeout=0.1)
 
                     if audio_data is None:
-                        logger.info("[音频转发] 收到终止信号")
                         break
 
                     # 转发到外部回调（写入虚拟麦克风）
                     if self.on_audio_chunk:
-                        audio_chunk_count[0] += 1
-                        if audio_chunk_count[0] <= 3:  # 只记录前3个块
-                            logger.info(f"[音频转发] 转发音频块 #{audio_chunk_count[0]}, 大小: {len(audio_data)} 字节")
                         self.on_audio_chunk(audio_data)
 
                     # 标记任务完成
@@ -342,15 +335,10 @@ class MeetingTranslationService:
                 except queue.Empty:
                     continue
                 except Exception as e:
-                    logger.error(f"[音频转发] 转发错误: {e}")
-                    import traceback
-                    traceback.print_exc()
-
-            logger.info(f"[音频转发] 转发循环已停止，共转发 {audio_chunk_count[0]} 个音频块")
+                    logger.error(f"音频转发错误: {e}")
 
         self._audio_forward_thread = threading.Thread(target=forward_loop, daemon=True)
         self._audio_forward_thread.start()
-        logger.info("音频转发线程已启动")
 
 
 class MeetingTranslationServiceWrapper:
@@ -358,13 +346,6 @@ class MeetingTranslationServiceWrapper:
     翻译服务包装器（同步接口）
     在独立线程中运行异步事件循环
     """
-
-    def __del__(self):
-        """析构函数"""
-        logger.info(f"[__DEL__] MeetingTranslationServiceWrapper being destroyed")
-        import sys
-        sys.stdout.flush()
-        sys.stderr.flush()
 
     def __init__(
         self,
@@ -469,86 +450,41 @@ class MeetingTranslationServiceWrapper:
 
     def stop(self):
         """停止翻译服务（同步方法）"""
-        # 立即flush日志，确保能看到进入stop方法
-        logger.info("[STOP-ENTRY] Entering stop() method")
-        for handler in logging.getLogger().handlers:
-            handler.flush()
-
         if not self.is_running:
-            logger.debug("翻译服务已经停止，跳过")
             return
 
         try:
-            logger.info("[STOP-1] 正在停止翻译服务...")
+            logger.info("正在停止翻译服务...")
             self.is_running = False
-            logger.info("[STOP-1.5] is_running set to False")
-            # 再次flush
-            for handler in logging.getLogger().handlers:
-                handler.flush()
 
-            # 1. 停止翻译服务并等待完成
+            # 停止翻译服务
             if self.service and self.loop:
                 try:
-                    logger.debug("[STOP-2] 调用service.stop()...")
                     future = asyncio.run_coroutine_threadsafe(self.service.stop(), self.loop)
-                    future.result(timeout=2)  # 减少超时时间到2秒
-                    logger.debug("[STOP-3] 翻译服务已停止")
+                    future.result(timeout=2)
                 except asyncio.TimeoutError:
-                    logger.warning("[STOP-ERROR] 停止翻译服务超时（2秒），强制继续")
+                    logger.warning("停止翻译服务超时，强制继续")
                 except Exception as e:
-                    logger.warning(f"[STOP-ERROR] 停止翻译服务时出错: {e}", exc_info=True)
+                    logger.warning(f"停止翻译服务时出错: {e}")
 
-            # 2. 设置标志并触发WebSocket关闭，让handle_server_messages退出
-            if self.service and hasattr(self.service, 'client'):
-                logger.info("[STOP-4] 关闭client连接...")
-                self.service.client.is_connected = False
-
-                # 尝试关闭WebSocket（fire-and-forget，不等待结果）
-                if hasattr(self.service.client, 'ws') and self.service.client.ws:
-                    try:
-                        # 使用asyncio创建关闭任务，但不等待
-                        asyncio.run_coroutine_threadsafe(
-                            self.service.client.ws.close(),
-                            self.loop
-                        )
-                        logger.info("[STOP-4] WebSocket.close()已调用（不等待）")
-                    except Exception as e:
-                        logger.debug(f"[STOP-DEBUG] 调用WebSocket.close()出错: {e}")
-
-            if self.loop and self.loop.is_running():
-                logger.debug("[STOP-5] 设置is_running=False，让事件循环自然退出...")
-                # service.is_running已经在前面设置为False了
-                # 这会让_run_with_auto_reconnect自然退出
-                pass
-
-            # 3. 等待线程结束（不强制join）
+            # 等待线程结束
             if self.thread and self.thread.is_alive():
-                logger.debug("[STOP-6] 等待服务线程自然结束（最多3秒）...")
                 self.thread.join(timeout=3)
-                if self.thread.is_alive():
-                    logger.warning("[STOP-WARN] 翻译服务线程未能在 3 秒内结束（daemon线程将被强制终止）")
-                else:
-                    logger.debug("[STOP-6] 服务线程已结束")
 
-            # 4. 清理事件循环
-            if self.loop:
-                logger.debug("[STOP-7] 清理事件循环引用...")
-                self.loop = None
-
-            # 5. 清理服务对象
+            # 清理资源
             self.service = None
             self.thread = None
+            self.loop = None
 
-            logger.info("[STOP-8] 翻译服务包装器已停止")
-            # 注意：不添加sleep，让方法立即返回
+            logger.info("翻译服务包装器已停止")
 
         except Exception as e:
-            logger.critical(f"[STOP-CRITICAL] stop()方法发生严重错误: {e}", exc_info=True)
+            logger.critical(f"停止翻译服务时发生错误: {e}", exc_info=True)
             # 确保清理状态
             self.is_running = False
-            self.loop = None
             self.service = None
             self.thread = None
+            self.loop = None
 
     def _format_error_message(self, error: Exception) -> str:
         """
@@ -597,14 +533,7 @@ class MeetingTranslationServiceWrapper:
         if not self.is_running or not self.service or not self.loop:
             return
 
-        # Debug: Track audio sending (first 5 chunks)
-        if not hasattr(self, '_send_count'):
-            self._send_count = 0
-        self._send_count += 1
-        if self._send_count <= 5:
-            logger.info(f"[AUDIO-SEND] Sending audio chunk #{self._send_count}, size={len(audio_data)} bytes, is_running={self.is_running}, loop_running={self.loop.is_running() if self.loop else 'N/A'}")
-
-        # 在事件循环中执行（添加回调处理错误）
+        # 在事件循环中执行
         try:
             future = asyncio.run_coroutine_threadsafe(
                 self.service.send_audio_chunk(audio_data),
@@ -615,13 +544,11 @@ class MeetingTranslationServiceWrapper:
                 try:
                     fut.exception()
                 except Exception as e:
-                    if self._send_count <= 5:  # 只记录前5个错误
-                        logger.error(f"[AUDIO-SEND] Error sending chunk #{self._send_count}: {e}")
+                    logger.error(f"发送音频数据时出错: {e}")
 
             future.add_done_callback(handle_error)
         except Exception as e:
-            if self._send_count <= 5:
-                logger.error(f"[AUDIO-SEND] Failed to schedule audio send #{self._send_count}: {e}")
+            logger.error(f"调度音频发送失败: {e}")
 
 
 # 测试代码
@@ -642,10 +569,10 @@ if __name__ == "__main__":
         print("❌ 请设置 DASHSCOPE_API_KEY 或 ALIYUN_API_KEY 环境变量")
         exit(1)
 
-    # 翻译回调
+    # 翻译回调（测试用）
     def on_translation(source, target):
-        print(f"\n[源] {source}")
-        print(f"[译] {target}")
+        # 只在测试时打印，实际使用由 on_translation 回调处理
+        pass
 
     # 创建翻译服务
     service = MeetingTranslationServiceWrapper(

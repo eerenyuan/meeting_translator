@@ -824,68 +824,30 @@ class MeetingTranslatorApp(QWidget):
 
             try:
                 if self.listen_translation_service:
-                    logger.info("[STOP] 准备停止听模式翻译服务...")
-                    import sys
-                    sys.stdout.flush()
-                    sys.stderr.flush()
-
                     self.listen_translation_service.stop()
-                    logger.info("[STOP] 听模式翻译服务stop()调用完成")
-                    sys.stdout.flush()
-                    sys.stderr.flush()
-
-                    # 在设置为None之前添加详细日志
-                    logger.info("[STOP] 准备清除listen_translation_service引用...")
-                    logger.info(f"[STOP] 对象类型: {type(self.listen_translation_service)}")
-                    logger.info(f"[STOP] 对象ID: {id(self.listen_translation_service)}")
-                    sys.stdout.flush()
-                    sys.stderr.flush()
-
-                    # 尝试设置为None（这里可能导致崩溃）
-                    try:
-                        print("[STOP] Before setting to None...")
-                        sys.stdout.flush()
-                        self.listen_translation_service = None
-                        print("[STOP] After setting to None")
-                        sys.stdout.flush()
-                        logger.info("[STOP] ✓ listen_translation_service已设为None")
-                    except Exception as set_none_err:
-                        logger.error(f"[STOP-ERROR] 设置None时出错: {set_none_err}", exc_info=True)
-                        raise
-                    sys.stdout.flush()
-                    sys.stderr.flush()
-
-                    logger.info("[STOP] 听模式翻译服务引用已清除")
-                else:
-                    logger.info("[STOP] 听模式翻译服务为None，跳过")
+                    self.listen_translation_service = None
             except Exception as e:
-                logger.error(f"[STOP-ERROR] 停止翻译服务时出错: {e}", exc_info=True)
+                logger.error(f"停止听模式翻译服务时出错: {e}", exc_info=True)
 
             # 3. 停止说模式
             try:
                 if self.speak_audio_capture:
-                    logger.debug("正在停止说模式音频捕获...")
                     self.speak_audio_capture.stop()
                     self.speak_audio_capture = None
-                    logger.debug("说模式音频捕获已停止")
             except Exception as e:
                 logger.error(f"停止说模式音频捕获时出错: {e}", exc_info=True)
 
             try:
                 if self.speak_translation_service:
-                    logger.debug("正在停止说模式翻译服务...")
                     self.speak_translation_service.stop()
                     self.speak_translation_service = None
-                    logger.debug("说模式翻译服务已停止")
             except Exception as e:
                 logger.error(f"停止说模式翻译服务时出错: {e}", exc_info=True)
 
             try:
                 if self.speak_audio_output:
-                    logger.debug("正在停止音频输出...")
                     self.speak_audio_output.stop()
                     self.speak_audio_output = None
-                    logger.debug("音频输出已停止")
             except Exception as e:
                 logger.error(f"停止音频输出时出错: {e}", exc_info=True)
 
@@ -893,7 +855,6 @@ class MeetingTranslatorApp(QWidget):
             self.is_running = False
 
             try:
-                logger.debug("更新UI状态...")
                 self.start_btn.setText("▶️ 启动翻译")
                 self.start_btn.setObjectName("")  # 移除stopButton，恢复默认样式
                 # 强制重新应用样式
@@ -908,23 +869,10 @@ class MeetingTranslatorApp(QWidget):
 
                 if not save_subtitles:
                     self.update_status("就绪", "ready")
-
-                logger.debug("UI状态更新完成")
             except Exception as e:
                 logger.error(f"更新UI时出错: {e}", exc_info=True)
 
             logger.info("翻译已停止")
-            logger.info(f"主窗口状态: visible={self.isVisible()}, enabled={self.isEnabled()}")
-
-            # 强制flush所有日志
-            import sys
-            sys.stdout.flush()
-            sys.stderr.flush()
-            for handler in logging.getLogger().handlers:
-                handler.flush()
-
-            # 确认：打印到控制台
-            print("[SUCCESS] stop_translation completed successfully")
 
         except Exception as e:
             # 捕获整个stop_translation过程中的任何未捕获异常
@@ -968,7 +916,11 @@ class MeetingTranslatorApp(QWidget):
             is_final: 是否为最终文本（True=已finalize，False=增量文本）
         """
         if is_final:
-            logger.info(f"翻译: {source_text} -> {target_text}")
+            # 如果 source_text 已经包含 "[译]" 前缀，则不重复显示
+            if source_text.startswith("[译]"):
+                logger.info(f"翻译: {target_text}")
+            else:
+                logger.info(f"翻译: {source_text} -> {target_text}")
         else:
             logger.debug(f"增量翻译: {target_text}")
 

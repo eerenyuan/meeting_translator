@@ -126,22 +126,19 @@ class AudioOutputThread:
         except queue.Full:
             pass
 
-        if self.thread:
+        # 等待线程结束（最多2秒）
+        if self.thread and self.thread.is_alive():
+            logger.debug("等待音频输出线程退出...")
             self.thread.join(timeout=2)
 
-        # 清理资源
-        if self.stream:
-            try:
-                self.stream.stop_stream()
-                self.stream.close()
-            except:
-                pass
-
-        if self.pyaudio_instance:
-            try:
-                self.pyaudio_instance.terminate()
-            except:
-                pass
+        # ⚠️ 关键：不主动关闭stream和pyaudio
+        # 原因：
+        # 1. daemon线程可能还在等待音频数据，无法及时退出
+        # 2. 如果daemon线程还在使用stream，调用close()会导致程序崩溃
+        # 3. Python GC会在对象引用清零后自动清理资源
+        self.stream = None
+        self.pyaudio_instance = None
+        logger.debug("音频流和PyAudio引用已清除（交给GC清理）")
 
         logger.info("音频输出线程已停止")
 
@@ -302,11 +299,9 @@ class AudioOutputThread:
             )
 
             logger.info(f"音频输出流已打开（{self.output_sample_rate}Hz, {self.channels}ch）")
-            logger.info(f"[AudioOutput] 配置: input={self.input_sample_rate}Hz -> output={self.output_sample_rate}Hz")
 
             # 重采样状态（用于批量处理）
             resample_state = None
-            play_count = 0
 
             # 持续写入音频数据
             while self.is_running:
@@ -324,11 +319,6 @@ class AudioOutputThread:
 
                         # 重采样（如果需要）
                         audio_data, resample_state = self._resample_audio(audio_data, resample_state)
-
-                        # Debug: log first 3 plays
-                        play_count += 1
-                        if play_count <= 3:
-                            logger.info(f"[AudioOutput] 播放音频块 #{play_count}, 大小: {len(audio_data)} 字节 (重采样后)")
 
                         # 写入音频流（带错误检测）
                         try:
