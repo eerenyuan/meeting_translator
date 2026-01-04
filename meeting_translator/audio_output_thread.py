@@ -114,16 +114,11 @@ class AudioOutputThread:
         self.is_running = False
 
         # 清空队列中的未播放数据，避免停止时播放积压内容
-        cleared_count = 0
         while not self.audio_queue.empty():
             try:
                 self.audio_queue.get_nowait()
-                cleared_count += 1
             except queue.Empty:
                 break
-
-        if cleared_count > 0:
-            logger.debug(f"已清空 {cleared_count} 个未播放的音频块")
 
         # 发送终止信号
         try:
@@ -139,14 +134,14 @@ class AudioOutputThread:
             try:
                 self.stream.stop_stream()
                 self.stream.close()
-            except Exception as e:
-                logger.debug(f"关闭输出流时出错: {e}")
+            except:
+                pass
 
         if self.pyaudio_instance:
             try:
                 self.pyaudio_instance.terminate()
-            except Exception as e:
-                logger.debug(f"终止 PyAudio 时出错: {e}")
+            except:
+                pass
 
         logger.info("音频输出线程已停止")
 
@@ -246,54 +241,7 @@ class AudioOutputThread:
             audio_data: PCM 音频数据（input_sample_rate=24kHz, 单声道, 16-bit）
         """
         if not self.is_running:
-            logger.warning(f"[AudioOutput] 线程未运行，丢弃 {len(audio_data)} 字节")
             return
-
-        # Debug: Log first 3 chunks received
-        if not hasattr(self, '_chunk_count'):
-            self._chunk_count = 0
-        self._chunk_count += 1
-        if self._chunk_count <= 3:
-            logger.info(f"[AudioOutput] 接收音频块 #{self._chunk_count}, 大小: {len(audio_data)} 字节")
-            # Check if data looks like valid PCM
-            if len(audio_data) >= 100:
-                import struct
-                try:
-                    samples = struct.unpack(f'<{min(50, len(audio_data)//2)}h', audio_data[:100])
-                    max_sample = max(abs(s) for s in samples)
-                    logger.info(f"[AudioOutput] PCM样本范围检查: max={max_sample} (有效PCM16应 < 32768)")
-                except Exception as e:
-                    logger.warning(f"[AudioOutput] 无法解析PCM样本: {e}")
-
-            # Save first chunk to file for analysis
-            if self._chunk_count == 1:
-                try:
-                    import tempfile
-                    # Save as both .raw (PCM) and .opus (Opus) for testing
-                    raw_file = os.path.join(tempfile.gettempdir(), "doubao_audio_chunk1.raw")
-                    opus_file = os.path.join(tempfile.gettempdir(), "doubao_audio_chunk1.opus")
-
-                    with open(raw_file, 'wb') as f:
-                        f.write(audio_data)
-                    with open(opus_file, 'wb') as f:
-                        f.write(audio_data)
-
-                    logger.info(f"[AudioOutput] 已保存音频块到: {raw_file}")
-                    logger.info(f"[AudioOutput] 测试PCM: ffplay -f s16le -ar 24000 {raw_file}")
-                    logger.info(f"[AudioOutput] 测试Opus: ffplay {opus_file}")
-
-                    # Check file header to detect format
-                    if len(audio_data) >= 8:
-                        header_hex = ' '.join(f'{b:02x}' for b in audio_data[:8])
-                        logger.info(f"[AudioOutput] 文件头: {header_hex}")
-                        # Opus in Ogg: "4f 67 67 53" (OggS)
-                        if audio_data[:4] == b'OggS':
-                            logger.warning(f"[AudioOutput] 检测到Ogg容器，Doubao可能返回的是Opus而非PCM！")
-                except Exception as e:
-                    logger.warning(f"[AudioOutput] 保存调试文件失败: {e}")
-
-        # 注意：为了性能，直接入队原始 24kHz 数据
-        # WSOLA 和重采样都在 _output_loop 中批量处理
 
         try:
             # 先尝试非阻塞写入

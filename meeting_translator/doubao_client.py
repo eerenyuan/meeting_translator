@@ -243,60 +243,31 @@ class DoubaoClient(BaseTranslationClient):
                 response.ParseFromString(message)
                 event_type = response.event
 
-                # Debug: log all received events
-                print(f"[DEBUG] Received event type: {event_type}")
-
                 # Source language recognition (ASR)
-                if event_type == self.EVENT_ASR_START:
-                    print("[DEBUG] ASR started")
-
-                elif event_type == self.EVENT_ASR_DELTA:
+                if event_type == self.EVENT_ASR_DELTA:
                     # Source language incremental recognition
                     source_text = response.text
-                    print(f"[DEBUG] ASR delta: {source_text}")
                     if source_text and on_text_received:
                         on_text_received(f"[源] {source_text}")
 
-                elif event_type == self.EVENT_ASR_DONE:
-                    print("[DEBUG] ASR done")
-
-                # Translation start
-                elif event_type == self.EVENT_TRANSLATE_START:
-                    print("[DEBUG] Translation started")
-
-                # Translation delta (incremental text)
+                # Translation delta (incremental text) - skip displaying
                 elif event_type == self.EVENT_TRANSLATE_DELTA:
-                    delta = response.text
-                    print(f"[DEBUG] Translation delta: {delta}")
-                    if delta and on_text_received:
-                        on_text_received(f"[译增量] {delta}")
+                    pass  # Don't show incremental updates
 
                 # Translation done (complete sentence)
                 elif event_type == self.EVENT_TRANSLATE_DONE:
                     text = response.text
-                    print(f"[DEBUG] Translation done: {text}")
-                    if text and on_text_received:
-                        on_text_received(f"[译] {text}")
-
-                # Audio synthesis start
-                elif event_type == self.EVENT_AUDIO_START:
-                    print("[DEBUG] Audio synthesis started")
+                    if text:
+                        print(f"[译] {text}")
+                        if on_text_received:
+                            on_text_received(f"[译] {text}")
 
                 # Audio delta (incremental audio data)
                 elif event_type == self.EVENT_AUDIO_DELTA:
                     pcm_data = response.data
-                    print(f"[DEBUG] Audio delta: {len(pcm_data) if pcm_data else 0} bytes (PCM)")
                     if pcm_data and self.audio_enabled:
                         # Direct playback - Doubao returns PCM format
                         self.audio_playback_queue.put(pcm_data)
-
-                # Audio done
-                elif event_type == self.EVENT_AUDIO_DONE:
-                    print("[DEBUG] Audio synthesis done")
-
-                # Usage/billing info
-                elif event_type == self.EVENT_USAGE:
-                    print("[DEBUG] Usage/billing event received")
 
                 # Session finished
                 elif event_type == Type.SessionFinished:
@@ -308,14 +279,10 @@ class DoubaoClient(BaseTranslationClient):
                     print(f"[ERROR] Doubao session failed: {response.response_meta.Message}")
                     break
 
-                # Unknown event - but still collect audio data (like official SDK)
-                else:
-                    print(f"[WARN] Unknown event type: {event_type}")
-                    # Official SDK collects data from all events except Usage
-                    if event_type != self.EVENT_USAGE and response.data:
-                        print(f"[DEBUG] Unknown event {event_type} has data: {len(response.data)} bytes")
-                        if self.audio_enabled:
-                            self.audio_playback_queue.put(response.data)
+                # Unknown event - still collect audio data (like official SDK)
+                elif event_type != self.EVENT_USAGE and response.data:
+                    if self.audio_enabled:
+                        self.audio_playback_queue.put(response.data)
 
         except Exception as e:
             print(f"[ERROR] Doubao message handling error: {e}")
@@ -362,17 +329,11 @@ class DoubaoClient(BaseTranslationClient):
                 self.ws = None
 
         # Clear audio queue to prevent buffered audio from playing
-        cleared = 0
         while not self.audio_playback_queue.empty():
             try:
                 self.audio_playback_queue.get_nowait()
-                cleared += 1
             except:
                 break
-        if cleared > 0:
-            print(f"[DEBUG] Cleared {cleared} audio chunks from Doubao queue")
-
-        print("[OK] Doubao connection closed")
 
         # Stop audio player
         if self.audio_player_thread and self.audio_player_thread.is_alive():
@@ -382,7 +343,8 @@ class DoubaoClient(BaseTranslationClient):
         # Terminate PyAudio
         if self.pyaudio_instance:
             self.pyaudio_instance.terminate()
-            print("[OK] PyAudio terminated")
+
+        print("[OK] Doubao connection closed")
 
     def start_audio_player(self):
         """Start audio playback thread for s2s mode"""
@@ -394,7 +356,6 @@ class DoubaoClient(BaseTranslationClient):
             daemon=True
         )
         self.audio_player_thread.start()
-        print("[OK] Doubao audio player started")
 
     def _decode_opus_to_pcm(self, opus_data: bytes) -> bytes:
         """Decode Opus audio data to PCM using PyAV"""
@@ -439,7 +400,6 @@ class DoubaoClient(BaseTranslationClient):
     def _audio_player_task(self):
         """Audio playback thread"""
         stream = None
-        chunk_count = 0
         try:
             stream = self.pyaudio_instance.open(
                 format=self.output_format,
@@ -449,24 +409,12 @@ class DoubaoClient(BaseTranslationClient):
                 frames_per_buffer=self.output_chunk
             )
 
-            print(f"[DEBUG] Audio player opened: {self.output_rate}Hz, {self.channels}ch, format=paInt16")
-
             while True:
                 audio_data = self.audio_playback_queue.get()
                 if audio_data is None:  # Stop signal
                     break
 
-                chunk_count += 1
-                if chunk_count <= 3:
-                    print(f"[DEBUG] Playing audio chunk #{chunk_count}, size={len(audio_data)} bytes")
-                    # Check if data looks like PCM (samples should be in reasonable range)
-                    if len(audio_data) >= 100:
-                        import struct
-                        samples = struct.unpack(f'<{min(50, len(audio_data)//2)}h', audio_data[:100])
-                        max_sample = max(abs(s) for s in samples)
-                        print(f"[DEBUG] Sample range: max={max_sample} (should be < 32768 for valid PCM)")
-
-                # Doubao should output PCM format, write directly
+                # Doubao outputs PCM format, write directly
                 stream.write(audio_data)
 
         except Exception as e:
@@ -475,4 +423,3 @@ class DoubaoClient(BaseTranslationClient):
             if stream:
                 stream.stop_stream()
                 stream.close()
-            print("[OK] Doubao audio player stopped")

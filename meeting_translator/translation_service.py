@@ -14,6 +14,28 @@ from translation_client_factory import TranslationClientFactory
 logger = logging.getLogger(__name__)
 
 
+# 设置全局unraisable异常处理器（抑制WebSocket关闭时的"Exception ignored"警告）
+def _suppress_websocket_unraisable_exceptions(unraisable):
+    """抑制WebSocket关闭时产生的不可触发异常"""
+    # 检查是否是WebSocket close_connection相关的异常
+    if unraisable.object and hasattr(unraisable.object, '__name__'):
+        if 'close_connection' in unraisable.object.__name__:
+            return  # 抑制
+
+    # 检查异常类型
+    if unraisable.exc_type and issubclass(unraisable.exc_type, RuntimeError):
+        exc_msg = str(unraisable.exc_value) if unraisable.exc_value else ''
+        if 'event loop' in exc_msg.lower():
+            return  # 抑制 "no running event loop" 错误
+
+    # 其他异常使用默认处理器
+    sys.__unraisablehook__(unraisable)
+
+
+# 安装全局unraisable异常处理器
+sys.unraisablehook = _suppress_websocket_unraisable_exceptions
+
+
 class MeetingTranslationService:
     """会议翻译服务（英文 → 中文）"""
 
@@ -380,6 +402,30 @@ class MeetingTranslationServiceWrapper:
         # 创建事件循环
         self.loop = asyncio.new_event_loop()
 
+        # 设置自定义异常处理器，抑制WebSocket关闭时的警告
+        def exception_handler(loop, context):
+            """自定义异常处理器，抑制WebSocket关闭相关的异常"""
+            exception = context.get('exception')
+            message = context.get('message', '')
+
+            # 抑制WebSocket关闭相关的异常
+            if exception and isinstance(exception, RuntimeError):
+                if 'event loop' in str(exception).lower():
+                    return  # 抑制 "no running event loop" 错误
+
+            # 抑制 "Task was destroyed but it is pending" 警告
+            if 'Task was destroyed but it is pending' in message:
+                return
+
+            # 抑制WebSocket close_connection相关的异常
+            if 'close_connection' in message.lower():
+                return
+
+            # 其他异常正常处理
+            loop.default_exception_handler(context)
+
+        self.loop.set_exception_handler(exception_handler)
+
         # 在独立线程中运行事件循环
         def run_loop():
             asyncio.set_event_loop(self.loop)
@@ -440,7 +486,7 @@ class MeetingTranslationServiceWrapper:
         if self.loop and self.loop.is_running():
             try:
                 import time
-                time.sleep(0.5)  # 给WebSocket关闭500ms时间
+                time.sleep(1.0)  # 给WebSocket关闭1秒时间（增加等待时间以确保清理完成）
 
                 # 获取所有待处理的任务
                 pending = asyncio.all_tasks(self.loop)
@@ -449,8 +495,8 @@ class MeetingTranslationServiceWrapper:
                     for task in pending:
                         task.cancel()
 
-                    # 给任务取消一点时间
-                    time.sleep(0.2)
+                    # 给任务取消更多时间
+                    time.sleep(0.5)
             except Exception as e:
                 logger.debug(f"处理剩余任务时出错: {e}")
 
