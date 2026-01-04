@@ -818,9 +818,36 @@ class MeetingTranslatorApp(QWidget):
             try:
                 if self.listen_translation_service:
                     logger.info("[STOP] 准备停止听模式翻译服务...")
+                    import sys
+                    sys.stdout.flush()
+                    sys.stderr.flush()
+
                     self.listen_translation_service.stop()
                     logger.info("[STOP] 听模式翻译服务stop()调用完成")
-                    self.listen_translation_service = None
+                    sys.stdout.flush()
+                    sys.stderr.flush()
+
+                    # 在设置为None之前添加详细日志
+                    logger.info("[STOP] 准备清除listen_translation_service引用...")
+                    logger.info(f"[STOP] 对象类型: {type(self.listen_translation_service)}")
+                    logger.info(f"[STOP] 对象ID: {id(self.listen_translation_service)}")
+                    sys.stdout.flush()
+                    sys.stderr.flush()
+
+                    # 尝试设置为None（这里可能导致崩溃）
+                    try:
+                        print("[STOP] Before setting to None...")
+                        sys.stdout.flush()
+                        self.listen_translation_service = None
+                        print("[STOP] After setting to None")
+                        sys.stdout.flush()
+                        logger.info("[STOP] ✓ listen_translation_service已设为None")
+                    except Exception as set_none_err:
+                        logger.error(f"[STOP-ERROR] 设置None时出错: {set_none_err}", exc_info=True)
+                        raise
+                    sys.stdout.flush()
+                    sys.stderr.flush()
+
                     logger.info("[STOP] 听模式翻译服务引用已清除")
                 else:
                     logger.info("[STOP] 听模式翻译服务为None，跳过")
