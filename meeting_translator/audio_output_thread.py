@@ -265,6 +265,18 @@ class AudioOutputThread:
                 except Exception as e:
                     logger.warning(f"[AudioOutput] 无法解析PCM样本: {e}")
 
+            # Save first chunk to file for analysis
+            if self._chunk_count == 1:
+                try:
+                    import tempfile
+                    debug_file = os.path.join(tempfile.gettempdir(), "doubao_audio_chunk1.raw")
+                    with open(debug_file, 'wb') as f:
+                        f.write(audio_data)
+                    logger.info(f"[AudioOutput] 已保存第一个音频块到: {debug_file}")
+                    logger.info(f"[AudioOutput] 可用命令播放测试: ffplay -f s16le -ar 24000 -ac 1 {debug_file}")
+                except Exception as e:
+                    logger.warning(f"[AudioOutput] 保存调试文件失败: {e}")
+
         # 注意：为了性能，直接入队原始 24kHz 数据
         # WSOLA 和重采样都在 _output_loop 中批量处理
 

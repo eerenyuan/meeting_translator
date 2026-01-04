@@ -106,6 +106,18 @@ class MeetingTranslationService:
 
         self.is_running = False
 
+        # 清空客户端的音频播放队列，避免停止时播放积压内容
+        if self.client and hasattr(self.client, 'audio_playback_queue'):
+            cleared = 0
+            while not self.client.audio_playback_queue.empty():
+                try:
+                    self.client.audio_playback_queue.get_nowait()
+                    cleared += 1
+                except:
+                    break
+            if cleared > 0:
+                logger.debug(f"已清空客户端音频队列中的 {cleared} 个音频块")
+
         # 取消消息处理任务
         if self.message_task:
             self.message_task.cancel()
