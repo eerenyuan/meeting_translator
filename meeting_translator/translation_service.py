@@ -477,8 +477,10 @@ class MeetingTranslationServiceWrapper:
         if self.service and self.loop:
             try:
                 future = asyncio.run_coroutine_threadsafe(self.service.stop(), self.loop)
-                future.result(timeout=3)  # 等待 stop() 完成，最多等待 3 秒
+                future.result(timeout=2)  # 减少超时时间到2秒
                 logger.debug("翻译服务已停止")
+            except asyncio.TimeoutError:
+                logger.warning("停止翻译服务超时（2秒），强制继续")
             except Exception as e:
                 logger.warning(f"停止翻译服务时出错: {e}")
 
@@ -486,7 +488,7 @@ class MeetingTranslationServiceWrapper:
         if self.loop and self.loop.is_running():
             try:
                 import time
-                time.sleep(1.0)  # 给WebSocket关闭1秒时间（增加等待时间以确保清理完成）
+                time.sleep(0.3)  # 减少等待时间到300ms
 
                 # 获取所有待处理的任务
                 pending = asyncio.all_tasks(self.loop)
@@ -495,8 +497,8 @@ class MeetingTranslationServiceWrapper:
                     for task in pending:
                         task.cancel()
 
-                    # 给任务取消更多时间
-                    time.sleep(0.5)
+                    # 给任务取消一点时间
+                    time.sleep(0.1)
             except Exception as e:
                 logger.debug(f"处理剩余任务时出错: {e}")
 
