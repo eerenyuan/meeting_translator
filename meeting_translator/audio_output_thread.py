@@ -255,6 +255,15 @@ class AudioOutputThread:
         self._chunk_count += 1
         if self._chunk_count <= 3:
             logger.info(f"[AudioOutput] 接收音频块 #{self._chunk_count}, 大小: {len(audio_data)} 字节")
+            # Check if data looks like valid PCM
+            if len(audio_data) >= 100:
+                import struct
+                try:
+                    samples = struct.unpack(f'<{min(50, len(audio_data)//2)}h', audio_data[:100])
+                    max_sample = max(abs(s) for s in samples)
+                    logger.info(f"[AudioOutput] PCM样本范围检查: max={max_sample} (有效PCM16应 < 32768)")
+                except Exception as e:
+                    logger.warning(f"[AudioOutput] 无法解析PCM样本: {e}")
 
         # 注意：为了性能，直接入队原始 24kHz 数据
         # WSOLA 和重采样都在 _output_loop 中批量处理
@@ -318,6 +327,7 @@ class AudioOutputThread:
             )
 
             logger.info(f"音频输出流已打开（{self.output_sample_rate}Hz, {self.channels}ch）")
+            logger.info(f"[AudioOutput] 配置: input={self.input_sample_rate}Hz -> output={self.output_sample_rate}Hz")
 
             # 重采样状态（用于批量处理）
             resample_state = None
