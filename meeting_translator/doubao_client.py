@@ -306,9 +306,14 @@ class DoubaoClient(BaseTranslationClient):
                     print(f"[ERROR] Doubao session failed: {response.response_meta.Message}")
                     break
 
-                # Unknown event
+                # Unknown event - but still collect audio data (like official SDK)
                 else:
                     print(f"[WARN] Unknown event type: {event_type}")
+                    # Official SDK collects data from all events except Usage
+                    if event_type != self.EVENT_USAGE and response.data:
+                        print(f"[DEBUG] Unknown event {event_type} has data: {len(response.data)} bytes")
+                        if self.audio_enabled:
+                            self.audio_playback_queue.put(response.data)
 
         except Exception as e:
             print(f"[ERROR] Doubao message handling error: {e}")
