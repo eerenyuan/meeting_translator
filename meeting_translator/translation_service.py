@@ -581,11 +581,31 @@ class MeetingTranslationServiceWrapper:
         if not self.is_running or not self.service or not self.loop:
             return
 
-        # 在事件循环中执行
-        asyncio.run_coroutine_threadsafe(
-            self.service.send_audio_chunk(audio_data),
-            self.loop
-        )
+        # Debug: Track audio sending (first 5 chunks)
+        if not hasattr(self, '_send_count'):
+            self._send_count = 0
+        self._send_count += 1
+        if self._send_count <= 5:
+            logger.info(f"[AUDIO-SEND] Sending audio chunk #{self._send_count}, size={len(audio_data)} bytes, is_running={self.is_running}, loop_running={self.loop.is_running() if self.loop else 'N/A'}")
+
+        # 在事件循环中执行（添加回调处理错误）
+        try:
+            future = asyncio.run_coroutine_threadsafe(
+                self.service.send_audio_chunk(audio_data),
+                self.loop
+            )
+            # 添加错误处理回调（不等待结果，避免阻塞）
+            def handle_error(fut):
+                try:
+                    fut.exception()
+                except Exception as e:
+                    if self._send_count <= 5:  # 只记录前5个错误
+                        logger.error(f"[AUDIO-SEND] Error sending chunk #{self._send_count}: {e}")
+
+            future.add_done_callback(handle_error)
+        except Exception as e:
+            if self._send_count <= 5:
+                logger.error(f"[AUDIO-SEND] Failed to schedule audio send #{self._send_count}: {e}")
 
 
 # 测试代码
