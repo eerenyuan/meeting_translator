@@ -92,7 +92,7 @@ class DoubaoClient(BaseTranslationClient):
 
         # Audio configuration
         self.input_chunk = 1600  # 100ms @ 16kHz
-        self.output_chunk = 2400  # 100ms @ 24kHz (for s2s mode)
+        self.output_chunk = 1600  # 100ms @ 16kHz (for s2s mode)
         self.input_format = pyaudio.paInt16
         self.output_format = pyaudio.paInt16
         self.channels = 1
@@ -111,8 +111,8 @@ class DoubaoClient(BaseTranslationClient):
 
     @property
     def output_rate(self) -> int:
-        """Doubao AST API outputs 24kHz audio"""
-        return 24000
+        """Doubao AST API outputs 16kHz audio (only 16000/48000 supported)"""
+        return 16000  # Fixed: Doubao only supports 16000 or 48000, not 24000
 
     @classmethod
     def get_supported_voices(cls) -> Dict[str, str]:
@@ -185,10 +185,12 @@ class DoubaoClient(BaseTranslationClient):
             request.source_audio.channel = 1
 
             # Target audio configuration (only for s2s mode)
-            # Use ogg_opus format (as in official SDK) - will decode with PyAV
+            # Use PCM format (as in official demo) - direct playback without decoding
             if self.mode == "s2s":
-                request.target_audio.format = "ogg_opus"  # Opus format (official SDK standard)
-                request.target_audio.rate = self.output_rate  # 24000Hz
+                request.target_audio.format = "pcm"  # PCM format for direct playback
+                request.target_audio.rate = self.output_rate  # 16000Hz (only 16000/48000 supported)
+                request.target_audio.bits = 16  # 16-bit PCM
+                request.target_audio.channel = 1  # Mono
 
             # Request parameters
             request.request.mode = self.mode
@@ -282,16 +284,11 @@ class DoubaoClient(BaseTranslationClient):
 
                 # Audio delta (incremental audio data)
                 elif event_type == self.EVENT_AUDIO_DELTA:
-                    opus_data = response.data
-                    print(f"[DEBUG] Audio delta: {len(opus_data) if opus_data else 0} bytes (Opus)")
-                    if opus_data and self.audio_enabled:
-                        # Decode Opus to PCM before queueing
-                        pcm_data = self._decode_opus_to_pcm(opus_data)
-                        if pcm_data:
-                            print(f"[DEBUG] Decoded to PCM: {len(pcm_data)} bytes")
-                            self.audio_playback_queue.put(pcm_data)
-                        else:
-                            print(f"[WARN] Failed to decode Opus chunk")
+                    pcm_data = response.data
+                    print(f"[DEBUG] Audio delta: {len(pcm_data) if pcm_data else 0} bytes (PCM)")
+                    if pcm_data and self.audio_enabled:
+                        # Direct playback - Doubao returns PCM format
+                        self.audio_playback_queue.put(pcm_data)
 
                 # Audio done
                 elif event_type == self.EVENT_AUDIO_DONE:

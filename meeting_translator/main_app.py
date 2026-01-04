@@ -682,9 +682,14 @@ class MeetingTranslatorApp(QWidget):
             logger.info("正在创建音频输出线程...")
             # 使用设备的实际采样率，避免音频失真
             device_output_rate = output_device.get('sample_rate', 48000)
+
+            # Different providers output different sample rates
+            # Doubao: 16kHz, Aliyun/OpenAI: 24kHz
+            api_output_rate = 16000 if self.provider == "doubao" else 24000
+
             self.speak_audio_output = AudioOutputThread(
                 device_index=output_device['index'],
-                input_sample_rate=24000,  # API 输出 24kHz
+                input_sample_rate=api_output_rate,  # Match provider output rate
                 output_sample_rate=device_output_rate,  # 使用设备实际采样率
                 channels=1,
                 enable_dynamic_speed=True,  # 启用自适应变速
