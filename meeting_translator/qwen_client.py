@@ -184,6 +184,7 @@ class QwenClient(BaseTranslationClient, OutputMixin, AudioPlayerMixin):
         # 根据 audio_enabled 设置 modalities
         modalities = ["text", "audio"] if self.audio_enabled else ["text"]
 
+        # 基础配置（S2T 模式）
         config = {
             "event_id": f"event_{int(time.time() * 1000)}",
             "type": "session.update",
@@ -205,10 +206,10 @@ class QwenClient(BaseTranslationClient, OutputMixin, AudioPlayerMixin):
             }
         }
 
-        # S2S 模式添加 TTS 参数
+        # S2S 模式：添加音频输出参数
         if self.audio_enabled:
             config["session"]["audio"] = {
-                "rate": 4,  # 加快语速
+                # 注意：rate 参数已确认无效，已移除
                 "pitch": 1.0,
                 "volume": 50
             }
