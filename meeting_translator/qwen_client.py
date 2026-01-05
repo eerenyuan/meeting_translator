@@ -25,40 +25,7 @@ from client_output_mixin import OutputMixin
 from client_audio_mixin import AudioPlayerMixin
 
 
-def load_glossary(glossary_file=None):
-    """
-    加载词汇表
-
-    Args:
-        glossary_file: 词汇表文件路径，默认使用 glossary.json
-
-    Returns:
-        词汇表字典
-    """
-    if glossary_file is None:
-        # 默认使用当前目录下的 glossary.json
-        current_dir = os.path.dirname(__file__)
-        glossary_file = os.path.join(current_dir, "glossary.json")
-
-    if os.path.exists(glossary_file):
-        try:
-            with open(glossary_file, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-                return data.get("glossary", {})
-        except Exception:
-            # 静默失败，使用默认词汇表
-            pass
-
-    # 返回默认词汇表
-    return {
-        "示例公司": "Example Company",
-        "张总": "Mr. Zhang",
-        "核心产品": "Core Product",
-        "业务系统": "Business System"
-    }
-
-
-def build_translation_instructions(glossary):
+def build_translation_instructions(glossary: Dict[str, str]) -> str:
     """
     构建翻译指令（极简版本）
 
@@ -68,6 +35,9 @@ def build_translation_instructions(glossary):
     Returns:
         instructions 字符串
     """
+    if not glossary:
+        return ""
+
     # 使用紧凑的单行格式，避免多行列表被误解为需要输出的内容
     terms = "/n".join([f"【{zh}:{en}】" for zh, en in glossary.items()])
 
@@ -100,7 +70,7 @@ class QwenClient(BaseTranslationClient, OutputMixin, AudioPlayerMixin):
         target_language: str = "en",
         voice: Optional[str] = "cherry",
         audio_enabled: bool = True,
-        glossary_file: Optional[str] = None,
+        glossary: Optional[Dict[str, str]] = None,
         **kwargs
     ):
         """
@@ -112,8 +82,11 @@ class QwenClient(BaseTranslationClient, OutputMixin, AudioPlayerMixin):
             target_language: 目标语言 (en/zh/ja/ko/...)
             voice: 音色选择 (cherry/nofish)，仅 S2S 模式有效
             audio_enabled: 是否启用音频输出（True=S2S, False=S2T）
-            glossary_file: 词汇表文件路径（可选）
+            glossary: 词汇表字典（可选）
             **kwargs: 其他参数
+
+        Note:
+            glossary 应该由主程序加载后传入，client 只负责使用。
         """
         if not api_key:
             raise ValueError("API key cannot be empty.")
@@ -125,7 +98,6 @@ class QwenClient(BaseTranslationClient, OutputMixin, AudioPlayerMixin):
             target_language=target_language,
             voice=voice,
             audio_enabled=audio_enabled,
-            glossary_file=glossary_file,
             **kwargs
         )
 
@@ -133,9 +105,10 @@ class QwenClient(BaseTranslationClient, OutputMixin, AudioPlayerMixin):
         self.ws = None
         self.api_url = "wss://dashscope.aliyuncs.com/api-ws/v1/realtime?model=qwen3-livetranslate-flash-realtime"
 
-        # 加载词汇表
-        self.glossary = load_glossary(glossary_file)
-        self.output_debug(f"已加载词汇表，包含 {len(self.glossary)} 个术语")
+        # 词汇表（由主程序传入）
+        self.glossary = glossary or {}
+        if self.glossary:
+            self.output_debug(f"已加载词汇表，包含 {len(self.glossary)} 个术语")
 
         # 麦克风输入配置（S2S 和 S2T 都需要）
         self._input_rate = 16000

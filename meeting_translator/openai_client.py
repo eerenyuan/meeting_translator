@@ -23,9 +23,6 @@ from translation_client_base import BaseTranslationClient, TranslationProvider
 from client_output_mixin import OutputMixin
 from client_audio_mixin import AudioPlayerMixin
 
-# 从 qwen_client 导入 load_glossary
-from qwen_client import load_glossary
-
 try:
     from python_socks.async_.asyncio import Proxy
     PROXY_AVAILABLE = True
@@ -72,7 +69,7 @@ class OpenAIClient(BaseTranslationClient, OutputMixin, AudioPlayerMixin):
         target_language: str = "en",
         voice: Optional[str] = "marin",  # 推荐：marin 或 cedar（最佳质量）
         audio_enabled: bool = True,
-        glossary_file: Optional[str] = None,
+        glossary: Optional[Dict[str, str]] = None,
         model: str = "gpt-realtime-2025-08-28",
         **kwargs
     ):
@@ -87,7 +84,7 @@ class OpenAIClient(BaseTranslationClient, OutputMixin, AudioPlayerMixin):
                   推荐：marin 或 cedar (最佳质量)
                   可选：alloy/ash/ballad/coral/echo/sage/shimmer/verse
             audio_enabled: 是否启用音频输出（True=S2S, False=S2T）
-            glossary_file: 词汇表文件路径（可选）
+            glossary: 词汇表字典（可选）
             model: OpenAI Realtime 模型名称
             **kwargs: 其他参数
 
@@ -95,6 +92,8 @@ class OpenAIClient(BaseTranslationClient, OutputMixin, AudioPlayerMixin):
             音色选项参考：
             - https://platform.openai.com/docs/guides/realtime-conversations#voice-options
             - https://openai.com/index/introducing-gpt-realtime/ (Marin & Cedar 介绍)
+
+            glossary 应该由主程序加载后传入，client 只负责使用。
         """
         if not api_key:
             raise ValueError("API key cannot be empty.")
@@ -106,7 +105,6 @@ class OpenAIClient(BaseTranslationClient, OutputMixin, AudioPlayerMixin):
             target_language=target_language,
             voice=voice,
             audio_enabled=audio_enabled,
-            glossary_file=glossary_file,
             **kwargs
         )
 
@@ -115,8 +113,8 @@ class OpenAIClient(BaseTranslationClient, OutputMixin, AudioPlayerMixin):
         self.ws = None
         self.api_url = f"wss://api.openai.com/v1/realtime?model={model}"
 
-        # 加载词汇表
-        self.glossary = load_glossary(glossary_file)
+        # 词汇表（由主程序传入）
+        self.glossary = glossary or {}
         if self.glossary:
             self.output_debug(f"已加载词汇表，包含 {len(self.glossary)} 个术语")
 

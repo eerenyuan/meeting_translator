@@ -23,9 +23,6 @@ from translation_client_base import BaseTranslationClient, TranslationProvider
 from client_output_mixin import OutputMixin
 from client_audio_mixin import AudioPlayerMixin
 
-# 从 qwen_client 导入 load_glossary
-from qwen_client import load_glossary
-
 # Add python_protogen to path for protobuf imports
 current_dir = os.path.dirname(os.path.abspath(__file__))
 protogen_dir = os.path.join(current_dir, "python_protogen")
@@ -82,7 +79,7 @@ class DoubaoClient(BaseTranslationClient, OutputMixin, AudioPlayerMixin):
         source_language: str = "zh",
         target_language: str = "en",
         audio_enabled: bool = True,
-        glossary_file: Optional[str] = None,
+        glossary: Optional[Dict[str, str]] = None,
         access_token: Optional[str] = None,
         **kwargs
     ):
@@ -94,13 +91,14 @@ class DoubaoClient(BaseTranslationClient, OutputMixin, AudioPlayerMixin):
             source_language: 源语言 (zh/en/ja/ko/...)
             target_language: 目标语言 (en/zh/ja/ko/...)
             audio_enabled: 是否启用音频输出（True=S2S, False=S2T）
-            glossary_file: 词汇表文件路径（可选）
+            glossary: 词汇表字典（可选）
             access_token: 豆包 Access Token (doubao_access_token)
             **kwargs: 其他参数
 
         Note:
-            豆包使用语音克隆技术，自动复制说话人音色。
-            不支持手动选择音色，因此没有 voice 参数。
+            豆包使用语音克隆技术，自动复制说话人音色，因此没有 voice 参数。
+
+            glossary 应该由主程序加载后传入，client 只负责使用。
 
             依赖检查：需要安装 protobuf 库
             pip install protobuf
@@ -120,7 +118,6 @@ class DoubaoClient(BaseTranslationClient, OutputMixin, AudioPlayerMixin):
             target_language=target_language,
             voice=None,  # 豆包不支持选择音色（语音克隆）
             audio_enabled=audio_enabled,
-            glossary_file=glossary_file,
             **kwargs
         )
 
@@ -133,8 +130,8 @@ class DoubaoClient(BaseTranslationClient, OutputMixin, AudioPlayerMixin):
         self.ws = None
         self.session_id = None
 
-        # 加载词汇表
-        self.glossary = load_glossary(glossary_file)
+        # 词汇表（由主程序传入）
+        self.glossary = glossary or {}
         if self.glossary:
             self.output_debug(f"已加载词汇表，包含 {len(self.glossary)} 个术语")
 
