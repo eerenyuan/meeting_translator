@@ -137,7 +137,6 @@ class BaseTranslationClient(ABC):
         pass
 
     @classmethod
-    @abstractmethod
     def get_supported_voices(cls) -> Dict[str, str]:
         """
         Get supported voices for this provider
@@ -145,26 +144,12 @@ class BaseTranslationClient(ABC):
         Returns:
             Dict mapping voice IDs to display names
             Example: {"alloy": "Alloy (Neutral)", "echo": "Echo (Male)"}
-        """
-        pass
 
-    def start_audio_player(self):
+        Note:
+            This method should be overridden by S2S clients.
+            S2T clients can return empty dict.
         """
-        Start audio playback thread (if applicable)
-
-        Optional method for providers that need to manage audio playback.
-        Default implementation does nothing.
-        """
-        pass
-
-    def stop_audio_player(self):
-        """
-        Stop audio playback thread (if applicable)
-
-        Optional method for providers that need to manage audio playback.
-        Default implementation does nothing.
-        """
-        pass
+        return {}
 
     def supports_voice_testing(self) -> bool:
         """
@@ -172,8 +157,12 @@ class BaseTranslationClient(ABC):
 
         Returns:
             bool: True 如果支持试听功能
+
+        Note:
+            Default implementation returns False.
+            S2S clients should use AudioPlayerMixin which overrides this.
         """
-        return False  # 默认不支持
+        return False
 
     async def test_voice_async(self, text: str = "Hello, this is a test."):
         """
@@ -186,6 +175,9 @@ class BaseTranslationClient(ABC):
 
         Raises:
             NotImplementedError: 如果 provider 不支持试听功能
+
+        Note:
+            S2S clients should use AudioPlayerMixin and override this method.
         """
         raise NotImplementedError(f"{self.__class__.__name__} 不支持音色试听功能")
 

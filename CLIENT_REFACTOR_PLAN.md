@@ -1,5 +1,18 @@
 # Client 重构计划
 
+## 进度概览
+
+- ✅ **阶段1**: 设计统一架构（完成）
+  - ✅ 创建 OutputMixin - 统一输出接口
+  - ✅ 创建 AudioPlayerMixin - 音频播放能力
+  - ✅ 扩展 BaseTranslationClient - 添加通用方法
+  - ✅ 设计 mixin 组合架构
+- ⏳ **阶段2**: 重构 Qwen clients（待开始）
+- ⏳ **阶段3**: 标准化其他 clients（待开始）
+- ⏳ **阶段4**: 添加试听功能（待开始）
+
+---
+
 ## 现状分析
 
 ### Client 文件
@@ -31,7 +44,7 @@
 
 ## 重构目标
 
-### 阶段1: 设计统一架构
+### 阶段1: 设计统一架构 ✅
 1. **OutputMixin** - 统一输出接口
    ```python
    def output_translation(source, target, metadata)
@@ -40,11 +53,49 @@
    def output_error(message, exc_info, metadata)
    ```
 
-2. **S2S/S2T 模式** - 区分两种模式
+2. **AudioPlayerMixin** - 音频播放能力
+   ```python
+   def start_audio_player()
+   def stop_audio_player()
+   def queue_audio(audio_data)
+   def supports_voice_testing() -> bool
+   async def test_voice_async(text)
+   ```
+
+3. **S2S/S2T 模式** - 区分两种模式
    - S2S (Speech-to-Speech): 语音输入 → 翻译 → 语音输出
    - S2T (Speech-to-Text): 语音输入 → 翻译 → 文本输出
 
-3. **重构 BaseTranslationClient** - 添加通用方法
+4. **重构 BaseTranslationClient** - 添加通用方法
+   - `get_translation_mode()` - 返回 S2S/S2T
+   - `supports_voice_testing()` - 默认 False
+   - `test_voice_async()` - 默认 raise NotImplementedError
+   - `get_supported_voices()` - 默认返回空 dict
+
+### 架构设计完成 ✅
+**Mixin 组合架构**：
+```
+BaseTranslationClient          # Core interface (connect, send_audio, handle_messages)
++ OutputMixin                   # 统一输出接口
++ AudioPlayerMixin              # 音频播放能力 (S2S only)
+= Full-featured Client
+```
+
+**示例**：
+```python
+# S2S Client（语音到语音）
+class QwenClient(BaseTranslationClient, OutputMixin, AudioPlayerMixin):
+    pass  # 自动获得：核心接口 + 输出 + 音频播放
+
+# S2T Client（语音到文本）
+class QwenTextClient(BaseTranslationClient, OutputMixin):
+    pass  # 自动获得：核心接口 + 输出（无音频播放）
+```
+
+**文件**：
+- ✅ `translation_client_base.py` - 抽象基类
+- ✅ `client_output_mixin.py` - 输出接口
+- ✅ `client_audio_mixin.py` - 音频播放能力
 
 ### 阶段2: 重构 Qwen Clients
 1. 合并 `livetranslate_client` 和 `livetranslate_text_client`
@@ -68,4 +119,33 @@
 4. **清晰分层** - 基类 + Mixin + 具体实现
 
 ## 下一步
-开始阶段1：设计 OutputMixin 和重构 BaseTranslationClient
+
+**当前阶段**: 阶段1 已完成 ✅
+
+**阶段2: 重构 Qwen clients**
+1. 创建 `qwen_client.py` - 统一的 Qwen client
+2. 根据 `audio_enabled` 参数动态应用 AudioPlayerMixin
+3. 应用 OutputMixin 替换所有 logger/print 调用
+4. 测试 S2S 和 S2T 两种模式
+
+**实现策略**：
+```python
+class QwenLiveTranslateClient(
+    BaseTranslationClient,
+    OutputMixin,
+    AudioPlayerMixin  # 只在 audio_enabled=True 时使用
+):
+    def __init__(self, audio_enabled=True, **kwargs):
+        # audio_enabled 控制 S2S/S2T 模式
+        super().__init__(audio_enabled=audio_enabled, **kwargs)
+
+        if not audio_enabled:
+            # S2T 模式：不使用音频播放功能
+            pass
+```
+
+**关键变更**：
+- 移除 `livetranslate_client.py` 和 `livetranslate_text_client.py`
+- 创建统一的 `qwen_client.py`
+- 所有输出通过 `self.output_translation()`, `self.output_status()` 等
+- 音频播放统一通过 `self.start_audio_player()`, `self.queue_audio()`
