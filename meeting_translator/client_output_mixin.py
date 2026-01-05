@@ -42,21 +42,14 @@ class OutputMixin:
         Returns:
             完整的 metadata dict
         """
-        # 检查是否为 S2S 模式（通过 AudioPlayerMixin 检测）
-        try:
-            from client_audio_mixin import AudioPlayerMixin
-            audio_enabled = isinstance(self, AudioPlayerMixin)
-        except ImportError:
-            audio_enabled = False
-
         metadata = {
             "provider": self._get_provider_name(),
             "source_language": getattr(self, 'source_language', 'zh'),
             "target_language": getattr(self, 'target_language', 'en'),
-            "audio_enabled": audio_enabled,
+            "audio_enabled": getattr(self, 'audio_enabled', True),
         }
 
-        # 添加音色信息（如果有，仅 S2S）
+        # 添加音色信息（如果有）
         if hasattr(self, 'voice') and self.voice:
             metadata["voice"] = self.voice
 

@@ -82,38 +82,42 @@ BaseTranslationClient          # Core interface (connect, send_audio, handle_mes
 ```
 
 **关键设计决策**：
-1. **职责分离**：
-   - `voice` 和 `audio_enabled` 从 base class 移到 AudioPlayerMixin
-   - S2T clients 不需要接受音频相关参数（接口隔离）
+1. **使用 `audio_enabled` flag 控制模式**：
+   - BaseTranslationClient 接受 `voice` 和 `audio_enabled` 参数
+   - 通过 `audio_enabled=True/False` 控制 S2S/S2T 模式
+   - 支持**一个 client 类同时支持两种模式**（合并重复代码）
 
-2. **使用 isinstance 检测模式**：
-   - 不再依赖 `audio_enabled` flag
-   - 使用 `isinstance(client, AudioPlayerMixin)` 判断 S2S/S2T
-   - 更 Pythonic，避免动态类型检查
+2. **为什么不用 isinstance 检测**：
+   - 每个 provider 的音频实现方式不同（需要深度集成）
+   - 无法用 composition 抽象通用组件
+   - 参数控制更灵活（运行时切换模式）
+   - 符合"合并两个 Qwen clients"的目标
 
 3. **cooperative multiple inheritance**：
-   - 所有 mixins 使用 `super().__init__(*args, **kwargs)`
-   - 确保正确的 MRO (Method Resolution Order)
+   - AudioPlayerMixin 使用 `super().__init__(*args, **kwargs)`
+   - 正确的 MRO (Method Resolution Order)
 
 **示例**：
 ```python
-# S2S Client（语音到语音）
-class QwenS2SClient(BaseTranslationClient, OutputMixin, AudioPlayerMixin):
-    def __init__(self, api_key, voice="zhichu", **kwargs):
-        # voice 和 audio_enabled 由 AudioPlayerMixin 处理
-        super().__init__(api_key, voice=voice, **kwargs)
+# 统一的 Qwen Client（一个类，两种模式）
+class QwenClient(BaseTranslationClient, OutputMixin, AudioPlayerMixin):
+    def __init__(self, api_key, voice="zhichu", audio_enabled=True, **kwargs):
+        super().__init__(api_key, voice=voice, audio_enabled=audio_enabled, **kwargs)
 
-# S2T Client（语音到文本）
-class QwenS2TClient(BaseTranslationClient, OutputMixin):
-    def __init__(self, api_key, **kwargs):
-        # 无 voice 参数，无音频播放能力
-        super().__init__(api_key, **kwargs)
+    def start_audio_player(self):
+        if not self.audio_enabled:
+            return  # S2T 模式，不启动音频播放
+        super().start_audio_player()  # 调用 AudioPlayerMixin 实现
 
-# 使用 isinstance 检测模式
-if isinstance(client, AudioPlayerMixin):
-    print("这是 S2S client")
+# 使用：
+client_s2s = QwenClient(api_key, audio_enabled=True)   # S2S 模式
+client_s2t = QwenClient(api_key, audio_enabled=False)  # S2T 模式
+
+# 检测模式：
+if client.audio_enabled:
+    print("S2S 模式")
 else:
-    print("这是 S2T client")
+    print("S2T 模式")
 ```
 
 **文件**：
@@ -144,43 +148,52 @@ else:
 
 ## 下一步
 
-**当前阶段**: 阶段1 已完成 ✅（包含架构优化）
+**当前阶段**: 阶段1 已完成 ✅
 
 **阶段2: 重构 Qwen clients**
-1. 创建 `qwen_client.py` - 统一的 Qwen client
-2. 根据模式创建两个类：
-   - `QwenS2SClient(BaseTranslationClient, OutputMixin, AudioPlayerMixin)`
-   - `QwenS2TClient(BaseTranslationClient, OutputMixin)`
-3. 应用 OutputMixin 替换所有 logger/print 调用
+1. 创建 `qwen_client.py` - **统一的 Qwen client**（合并两个文件）
+2. 应用 OutputMixin 替换所有 logger/print 调用
+3. 根据 `audio_enabled` 参数控制 S2S/S2T 行为
 4. 测试两种模式
 
 **实现策略**：
 ```python
-# 两种模式，两个类（而不是一个类 + audio_enabled flag）
+# 一个类支持两种模式（通过 audio_enabled 参数）
+class QwenClient(BaseTranslationClient, OutputMixin, AudioPlayerMixin):
+    def __init__(self, api_key, source_language="zh", target_language="en",
+                 voice=None, audio_enabled=True, **kwargs):
+        super().__init__(
+            api_key=api_key,
+            source_language=source_language,
+            target_language=target_language,
+            voice=voice,
+            audio_enabled=audio_enabled,
+            **kwargs
+        )
 
-# S2S 模式
-class QwenS2SClient(BaseTranslationClient, OutputMixin, AudioPlayerMixin):
-    def __init__(self, api_key, voice="zhichu", **kwargs):
-        super().__init__(api_key, voice=voice, **kwargs)
-        # 自动获得 voice, audio_enabled, start_audio_player() 等
+    async def handle_server_messages(self, on_text_received=None):
+        """处理服务器消息"""
+        async for message in self.websocket:
+            data = json.loads(message)
 
-# S2T 模式
-class QwenS2TClient(BaseTranslationClient, OutputMixin):
-    def __init__(self, api_key, **kwargs):
-        super().__init__(api_key, **kwargs)
-        # 无音频相关功能
+            # 共同逻辑：转录、翻译
+            if "translation" in data:
+                translation = data["translation"]
+                self.output_translation(translation, source_text=source_text)
 
-# 工厂函数（可选）
-def create_qwen_client(mode="s2s", **kwargs):
-    if mode == "s2s":
-        return QwenS2SClient(**kwargs)
-    else:
-        return QwenS2TClient(**kwargs)
+            # S2S 特有逻辑：处理音频
+            if self.audio_enabled and "audio" in data:
+                audio_data = base64.b64decode(data["audio"])
+                self.queue_audio(audio_data)
+
+    def start_audio_player(self):
+        if not self.audio_enabled:
+            return  # S2T 模式，跳过
+        super().start_audio_player()
 ```
 
 **关键变更**：
-- 移除 `livetranslate_client.py` 和 `livetranslate_text_client.py`
-- 创建 `qwen_s2s_client.py` 和 `qwen_s2t_client.py`（或在同一个文件）
-- 所有输出通过 `self.output_translation()`, `self.output_status()` 等
-- 音频播放统一通过 `self.start_audio_player()`, `self.queue_audio()`
-- 使用 `isinstance(client, AudioPlayerMixin)` 检测模式
+- ✅ 合并 `livetranslate_client.py` + `livetranslate_text_client.py` → `qwen_client.py`
+- ✅ 所有输出通过 `self.output_translation()`, `self.output_status()` 等
+- ✅ 音频相关方法检查 `self.audio_enabled`
+- ✅ 使用 `audio_enabled` flag 控制模式（而非类型区分）
