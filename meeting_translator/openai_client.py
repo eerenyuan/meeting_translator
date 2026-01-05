@@ -48,15 +48,15 @@ class OpenAIClient(BaseTranslationClient, OutputMixin, AudioPlayerMixin):
     # OpenAI Realtime API 使用 24kHz（输入和输出）
     AUDIO_RATE = 24000
 
-    # 支持的音色列表（OpenAI Realtime API）
+    # 支持的音色列表（来源：https://platform.openai.com/docs/guides/realtime-conversations#voice-options）
     SUPPORTED_VOICES = {
         "alloy": "Alloy (中性)",
-        "echo": "Echo (男声)",
-        "shimmer": "Shimmer (女声)",
         "ash": "Ash (男声)",
         "ballad": "Ballad (男声)",
         "coral": "Coral (女声)",
+        "echo": "Echo (男声)",
         "sage": "Sage (女声)",
+        "shimmer": "Shimmer (女声)",
         "verse": "Verse (男声)"
     }
 
@@ -78,11 +78,14 @@ class OpenAIClient(BaseTranslationClient, OutputMixin, AudioPlayerMixin):
             api_key: OpenAI API Key
             source_language: 源语言 (zh/en/ja/ko/...)
             target_language: 目标语言 (en/zh/ja/ko/...)
-            voice: 音色选择 (alloy/echo/shimmer/...)
+            voice: 音色选择 (alloy/ash/ballad/coral/echo/sage/shimmer/verse)
             audio_enabled: 是否启用音频输出（True=S2S, False=S2T）
             glossary_file: 词汇表文件路径（可选）
             model: OpenAI Realtime 模型名称
             **kwargs: 其他参数
+
+        Note:
+            音色选项参考：https://platform.openai.com/docs/guides/realtime-conversations#voice-options
         """
         if not api_key:
             raise ValueError("API key cannot be empty.")
