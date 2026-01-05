@@ -25,6 +25,11 @@ LEGACY_CONFIG_DIR = Path.home() / "Documents" / "会议翻译配置"
 LEGACY_RECORDS_DIR = Path.home() / "Documents" / "会议记录"
 
 
+# ========== 迁移标记 ==========
+# 用于记录是否已经完成过迁移
+MIGRATION_MARKER = CONFIG_DIR / ".migrated"
+
+
 def ensure_directories():
     """
     确保所有必要的目录存在
@@ -40,10 +45,32 @@ def migrate_legacy_files():
     """
     自动迁移旧目录中的文件到新目录
 
+    只在以下情况下迁移：
+    1. 迁移标记文件不存在（未迁移过）
+    2. 旧目录存在且有文件
+
     Returns:
-        dict: 迁移统计信息 {'logs': N, 'config': M, 'records': P}
+        dict: 迁移统计信息 {'logs': N, 'config': M, 'records': P, 'skipped': bool}
     """
-    stats = {'logs': 0, 'config': 0, 'records': 0}
+    stats = {'logs': 0, 'config': 0, 'records': 0, 'skipped': False}
+
+    # 检查是否已经迁移过
+    if MIGRATION_MARKER.exists():
+        stats['skipped'] = True
+        return stats
+
+    # 检查是否有旧文件需要迁移
+    has_legacy = any([
+        LEGACY_LOGS_DIR.exists() and list(LEGACY_LOGS_DIR.iterdir()),
+        LEGACY_CONFIG_DIR.exists() and list(LEGACY_CONFIG_DIR.iterdir()),
+        LEGACY_RECORDS_DIR.exists() and list(LEGACY_RECORDS_DIR.iterdir())
+    ])
+
+    if not has_legacy:
+        # 没有旧文件，创建标记文件（表示已检查过）
+        MIGRATION_MARKER.touch(exist_ok=True)
+        stats['skipped'] = True
+        return stats
 
     def migrate_files(src_dir, dst_dir, stat_key):
         """迁移单个目录的文件"""
@@ -71,6 +98,17 @@ def migrate_legacy_files():
     stats['config'] = migrate_files(LEGACY_CONFIG_DIR, CONFIG_DIR, 'config')
     stats['records'] = migrate_files(LEGACY_RECORDS_DIR, RECORDS_DIR, 'records')
 
+    # 迁移完成，创建标记文件
+    if sum(stats.values()) > 0:
+        try:
+            MIGRATION_MARKER.write_text(
+                f"Migration completed at {__import__('datetime').datetime.now()}\n"
+                f"Legacy files: {stats}\n"
+            )
+        except Exception:
+            # 标记文件创建失败不影响迁移结果
+            pass
+
     return stats
 
 
@@ -87,29 +125,22 @@ def get_initialization_message():
     if not MEETING_TRANSLATOR_ROOT.exists():
         messages.append(f"✨ 创建数据目录: {MEETING_TRANSLATOR_ROOT}")
 
-    # 检查是否有旧文件需要迁移
-    has_legacy = any([
-        LEGACY_LOGS_DIR.exists(),
-        LEGACY_CONFIG_DIR.exists(),
-        LEGACY_RECORDS_DIR.exists()
-    ])
+    # 检查是否需要迁移（只有在未迁移过且有旧文件时才显示）
+    stats = migrate_legacy_files()
 
-    if has_legacy:
+    if not stats['skipped'] and sum(stats.values()) > 0:
         messages.append("📦 检测到旧版本数据，正在迁移...")
-        stats = migrate_legacy_files()
-
-        if sum(stats.values()) > 0:
-            messages.append(f"✅ 迁移完成:")
-            if stats['logs'] > 0:
-                messages.append(f"   - 日志文件: {stats['logs']} 个")
-            if stats['config'] > 0:
-                messages.append(f"   - 配置文件: {stats['config']} 个")
-            if stats['records'] > 0:
-                messages.append(f"   - 会议记录: {stats['records']} 个")
-            messages.append(f"\n旧文件仍然保留在:")
-            messages.append(f"- {LEGACY_LOGS_DIR}")
-            messages.append(f"- {LEGACY_CONFIG_DIR}")
-            messages.append(f"- {LEGACY_RECORDS_DIR}")
-            messages.append(f"\n你可以手动删除这些旧目录。")
+        messages.append(f"✅ 迁移完成:")
+        if stats['logs'] > 0:
+            messages.append(f"   - 日志文件: {stats['logs']} 个")
+        if stats['config'] > 0:
+            messages.append(f"   - 配置文件: {stats['config']} 个")
+        if stats['records'] > 0:
+            messages.append(f"   - 会议记录: {stats['records']} 个")
+        messages.append(f"\n旧文件仍然保留在:")
+        messages.append(f"- {LEGACY_LOGS_DIR}")
+        messages.append(f"- {LEGACY_CONFIG_DIR}")
+        messages.append(f"- {LEGACY_RECORDS_DIR}")
+        messages.append(f"\n你可以手动删除这些旧目录。")
 
     return "\n".join(messages)
