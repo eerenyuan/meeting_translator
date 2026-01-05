@@ -48,13 +48,18 @@ class OpenAIClient(BaseTranslationClient, OutputMixin, AudioPlayerMixin):
     # OpenAI Realtime API 使用 24kHz（输入和输出）
     AUDIO_RATE = 24000
 
-    # 支持的音色列表（来源：https://platform.openai.com/docs/guides/realtime-conversations#voice-options）
+    # 支持的音色列表
+    # 来源：https://platform.openai.com/docs/guides/realtime-conversations#voice-options
+    # 推荐：marin 和 cedar (最佳质量)
+    # 参考：https://openai.com/index/introducing-gpt-realtime/
     SUPPORTED_VOICES = {
         "alloy": "Alloy (中性)",
         "ash": "Ash (男声)",
         "ballad": "Ballad (男声)",
+        "cedar": "Cedar (中性) ⭐ 推荐",
         "coral": "Coral (女声)",
         "echo": "Echo (男声)",
+        "marin": "Marin (中性) ⭐ 推荐",
         "sage": "Sage (女声)",
         "shimmer": "Shimmer (女声)",
         "verse": "Verse (男声)"
@@ -65,7 +70,7 @@ class OpenAIClient(BaseTranslationClient, OutputMixin, AudioPlayerMixin):
         api_key: str,
         source_language: str = "zh",
         target_language: str = "en",
-        voice: Optional[str] = "alloy",
+        voice: Optional[str] = "marin",  # 推荐：marin 或 cedar（最佳质量）
         audio_enabled: bool = True,
         glossary_file: Optional[str] = None,
         model: str = "gpt-realtime-2025-08-28",
@@ -78,14 +83,18 @@ class OpenAIClient(BaseTranslationClient, OutputMixin, AudioPlayerMixin):
             api_key: OpenAI API Key
             source_language: 源语言 (zh/en/ja/ko/...)
             target_language: 目标语言 (en/zh/ja/ko/...)
-            voice: 音色选择 (alloy/ash/ballad/coral/echo/sage/shimmer/verse)
+            voice: 音色选择
+                  推荐：marin 或 cedar (最佳质量)
+                  可选：alloy/ash/ballad/coral/echo/sage/shimmer/verse
             audio_enabled: 是否启用音频输出（True=S2S, False=S2T）
             glossary_file: 词汇表文件路径（可选）
             model: OpenAI Realtime 模型名称
             **kwargs: 其他参数
 
         Note:
-            音色选项参考：https://platform.openai.com/docs/guides/realtime-conversations#voice-options
+            音色选项参考：
+            - https://platform.openai.com/docs/guides/realtime-conversations#voice-options
+            - https://openai.com/index/introducing-gpt-realtime/ (Marin & Cedar 介绍)
         """
         if not api_key:
             raise ValueError("API key cannot be empty.")
