@@ -194,6 +194,26 @@ class AudioDeviceManager:
 
         print("\n" + "="*80)
 
+    def refresh(self):
+        """
+        刷新设备列表
+
+        重新创建 PyAudio 实例以获取最新的设备列表。
+        用于检测新连接的音频设备（如蓝牙耳机、USB 麦克风等）。
+
+        注意：调用后，旧的 PyAudio 实例会被 terminate。
+        """
+        try:
+            # 终止旧的 PyAudio 实例
+            if self.pyaudio_instance:
+                self.pyaudio_instance.terminate()
+
+            # 创建新的 PyAudio 实例
+            self.pyaudio_instance = pyaudio.PyAudio()
+        except Exception as e:
+            logger.error(f"刷新设备列表失败: {e}")
+            raise
+
     def cleanup(self):
         """清理资源"""
         if self.pyaudio_instance:

@@ -533,53 +533,60 @@ class MeetingTranslatorApp(QWidget):
 
     def on_refresh_devices(self):
         """刷新设备列表"""
-        # 保存当前选择的设备
-        current_listen_device = self.listen_device_combo.currentData()
-        current_speak_input_device = self.speak_input_combo.currentData()
-        current_speak_output_device = self.speak_output_combo.currentData()
+        try:
+            # 保存当前选择的设备
+            current_listen_device = self.listen_device_combo.currentData()
+            current_speak_input_device = self.speak_input_combo.currentData()
+            current_speak_output_device = self.speak_output_combo.currentData()
 
-        # 重新加载设备列表
-        self.load_devices()
+            # 关键：先刷新 PyAudio 实例，重新扫描设备
+            self.device_manager.refresh()
 
-        # 尝试恢复之前选择的设备
-        restored_count = 0
+            # 重新加载设备列表
+            self.load_devices()
 
-        # 恢复听模式设备
-        if current_listen_device:
-            for i in range(self.listen_device_combo.count()):
-                device = self.listen_device_combo.itemData(i)
-                if device and device['index'] == current_listen_device.get('index'):
-                    self.listen_device_combo.setCurrentIndex(i)
-                    restored_count += 1
-                    break
+            # 尝试恢复之前选择的设备
+            restored_count = 0
 
-        # 恢复说模式输入设备
-        if current_speak_input_device:
-            for i in range(self.speak_input_combo.count()):
-                device = self.speak_input_combo.itemData(i)
-                if device and device['index'] == current_speak_input_device.get('index'):
-                    self.speak_input_combo.setCurrentIndex(i)
-                    restored_count += 1
-                    break
+            # 恢复听模式设备
+            if current_listen_device:
+                for i in range(self.listen_device_combo.count()):
+                    device = self.listen_device_combo.itemData(i)
+                    if device and device['index'] == current_listen_device.get('index'):
+                        self.listen_device_combo.setCurrentIndex(i)
+                        restored_count += 1
+                        break
 
-        # 恢复说模式输出设备
-        if current_speak_output_device:
-            for i in range(self.speak_output_combo.count()):
-                device = self.speak_output_combo.itemData(i)
-                if device and device['index'] == current_speak_output_device.get('index'):
-                    self.speak_output_combo.setCurrentIndex(i)
-                    restored_count += 1
-                    break
+            # 恢复说模式输入设备
+            if current_speak_input_device:
+                for i in range(self.speak_input_combo.count()):
+                    device = self.speak_input_combo.itemData(i)
+                    if device and device['index'] == current_speak_input_device.get('index'):
+                        self.speak_input_combo.setCurrentIndex(i)
+                        restored_count += 1
+                        break
 
-        # 显示刷新结果
-        total_devices = (self.listen_device_combo.count() +
-                        self.speak_input_combo.count() +
-                        self.speak_output_combo.count())
+            # 恢复说模式输出设备
+            if current_speak_output_device:
+                for i in range(self.speak_output_combo.count()):
+                    device = self.speak_output_combo.itemData(i)
+                    if device and device['index'] == current_speak_output_device.get('index'):
+                        self.speak_output_combo.setCurrentIndex(i)
+                        restored_count += 1
+                        break
 
-        if restored_count > 0:
-            Out.status(f"✅ 设备列表已刷新（共 {total_devices} 个设备，恢复了 {restored_count} 个选择）")
-        else:
-            Out.status(f"✅ 设备列表已刷新（共 {total_devices} 个设备）")
+            # 显示刷新结果
+            total_devices = (self.listen_device_combo.count() +
+                            self.speak_input_combo.count() +
+                            self.speak_output_combo.count())
+
+            if restored_count > 0:
+                Out.status(f"✅ 设备列表已刷新（共 {total_devices} 个设备，恢复了 {restored_count} 个选择）")
+            else:
+                Out.status(f"✅ 设备列表已刷新（共 {total_devices} 个设备）")
+
+        except Exception as e:
+            Out.error(f"刷新设备列表失败: {e}", exc_info=True)
 
     def load_devices(self):
         """加载音频设备列表"""
