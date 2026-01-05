@@ -18,14 +18,11 @@ except ImportError:
 
 import queue
 import threading
-import logging
 
 # 导入基础类和 mixins
 from translation_client_base import BaseTranslationClient, TranslationProvider
 from client_output_mixin import OutputMixin
 from client_audio_mixin import AudioPlayerMixin
-
-logger = logging.getLogger(__name__)
 
 
 def load_glossary(glossary_file=None):
@@ -48,8 +45,9 @@ def load_glossary(glossary_file=None):
             with open(glossary_file, 'r', encoding='utf-8') as f:
                 data = json.load(f)
                 return data.get("glossary", {})
-        except Exception as e:
-            logger.warning(f"加载词汇表失败: {e}")
+        except Exception:
+            # 静默失败，使用默认词汇表
+            pass
 
     # 返回默认词汇表
     return {
