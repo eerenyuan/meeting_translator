@@ -36,7 +36,6 @@ class BaseTranslationClient(ABC):
         api_key: str,
         source_language: str = "zh",
         target_language: str = "en",
-        audio_enabled: bool = True,
         glossary_file: Optional[str] = None,
         **kwargs
     ):
@@ -47,14 +46,13 @@ class BaseTranslationClient(ABC):
             api_key: API key for the translation service
             source_language: Source language code (e.g., "zh", "en")
             target_language: Target language code (e.g., "en", "zh")
-            audio_enabled: Whether to enable audio output (True=S2S, False=S2T)
             glossary_file: Path to glossary file for custom terminology
-            **kwargs: Additional provider-specific parameters (e.g., voice for S2S)
+            **kwargs: Additional provider-specific parameters
+                     (e.g., voice, audio_enabled for AudioPlayerMixin)
         """
         self.api_key = api_key
         self.source_language = source_language
         self.target_language = target_language
-        self.audio_enabled = audio_enabled
         self.glossary_file = glossary_file
         self.is_connected = False
 
@@ -130,10 +128,12 @@ class BaseTranslationClient(ABC):
             TranslationMode: S2S 或 S2T
 
         Note:
-            根据 audio_enabled 参数判断模式。
+            根据 audio_enabled 属性判断模式（由 AudioPlayerMixin 设置）。
             True = S2S (语音到语音)，False = S2T (语音到文本)
         """
-        if hasattr(self, 'audio_enabled') and self.audio_enabled:
+        # audio_enabled 由 AudioPlayerMixin 设置
+        # 如果没有混入 AudioPlayerMixin，默认为 S2T
+        if getattr(self, 'audio_enabled', False):
             return TranslationMode.S2S
         else:
             return TranslationMode.S2T

@@ -46,7 +46,8 @@ class OutputMixin:
             "provider": self._get_provider_name(),
             "source_language": getattr(self, 'source_language', 'zh'),
             "target_language": getattr(self, 'target_language', 'en'),
-            "audio_enabled": getattr(self, 'audio_enabled', True),
+            # audio_enabled 由 AudioPlayerMixin 设置，默认 False
+            "audio_enabled": getattr(self, 'audio_enabled', False),
         }
 
         # 添加音色信息（如果有，仅 S2S clients 会混入 AudioPlayerMixin）

@@ -35,9 +35,19 @@ class AudioPlayerMixin:
             audio_enabled: 是否启用音频输出（默认 True）
             *args: 传递给父类的位置参数
             **kwargs: 传递给父类的关键字参数
+
+        Raises:
+            ValueError: 如果 audio_enabled=False 但提供了 voice 参数
         """
+        # 参数验证：S2T 模式不应该有 audio 相关参数
+        if not audio_enabled and voice is not None:
+            raise ValueError(
+                f"audio_enabled=False (S2T 模式) 不应该指定 voice 参数。"
+                f"请移除 voice='{voice}' 或设置 audio_enabled=True。"
+            )
+
         # 音频相关配置
-        self.voice = voice
+        self.voice = voice if audio_enabled else None
         self.audio_enabled = audio_enabled
 
         # 音频播放线程

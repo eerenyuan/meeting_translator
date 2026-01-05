@@ -84,23 +84,27 @@ BaseTranslationClient          # 核心接口 (connect, send_audio, input_rate)
 **职责分离**：
 | 组件 | 职责 | 属性/方法 |
 |------|------|-----------|
-| **BaseTranslationClient** | 核心翻译接口 | `api_key`, `source_language`, `target_language`, `audio_enabled`<br>`connect()`, `send_audio_chunk()`, `handle_server_messages()`<br>`input_rate` - 输入采样率（麦克风） |
+| **BaseTranslationClient** | 核心翻译接口 | `api_key`, `source_language`, `target_language`<br>`connect()`, `send_audio_chunk()`, `handle_server_messages()`<br>`input_rate` - 输入采样率（麦克风） |
 | **OutputMixin** | 统一输出 | `output_translation()`, `output_status()`, `output_error()` |
-| **AudioPlayerMixin** | 音频播放（S2S only） | `voice`, `output_rate`, `get_supported_voices()`<br>`start_audio_player()`, `stop_audio_player()`, `queue_audio()`<br>`supports_voice_testing()`, `test_voice_async()` |
+| **AudioPlayerMixin** | 音频播放（S2S only） | `voice`, `audio_enabled`, `output_rate`, `get_supported_voices()`<br>`start_audio_player()`, `stop_audio_player()`, `queue_audio()`<br>`supports_voice_testing()`, `test_voice_async()`<br>**参数验证**：audio_enabled=False 时拒绝 voice 参数 |
 
 **关键设计决策**：
 1. **使用 `audio_enabled` flag 控制模式**：
-   - BaseTranslationClient 接受 `audio_enabled` 参数
-   - AudioPlayerMixin 接受 `voice` 和 `audio_enabled` 参数
+   - AudioPlayerMixin 接受并管理 `voice` 和 `audio_enabled` 参数
    - 通过 `audio_enabled=True/False` 控制 S2S/S2T 模式
    - 支持**一个 client 类同时支持两种模式**（合并重复代码）
 
 2. **职责分离**：
-   - `voice`, `output_rate`, `get_supported_voices()` 移到 AudioPlayerMixin（S2S-only）
+   - `voice`, `audio_enabled`, `output_rate`, `get_supported_voices()` 在 AudioPlayerMixin（S2S-only）
    - `input_rate`, `send_audio_chunk()` 保留在 Base（S2S 和 S2T 都需要）
    - S2T clients 不混入 AudioPlayerMixin，不接受 `voice` 参数
 
-3. **为什么不用 isinstance 检测**：
+3. **参数验证**：
+   - AudioPlayerMixin.__init__() 检查参数一致性
+   - 如果 `audio_enabled=False` 但提供了 `voice`，抛出 ValueError
+   - 早期捕获配置错误
+
+4. **为什么不用 isinstance 检测**：
    - 每个 provider 的音频实现方式不同（需要深度集成）
    - 无法用 composition 抽象通用组件
    - 参数控制更灵活（运行时切换模式）
@@ -139,14 +143,12 @@ class QwenClient(BaseTranslationClient, OutputMixin, AudioPlayerMixin):
         super().start_audio_player()
 
 # 使用：
-client_s2s = QwenClient(api_key, voice="zhichu", audio_enabled=True)   # S2S
-client_s2t = QwenClient(api_key, audio_enabled=False)  # S2T（无需 voice）
+client_s2s = QwenClient(api_key, voice="zhichu", audio_enabled=True)   # ✅ S2S
+client_s2t = QwenClient(api_key, audio_enabled=False)  # ✅ S2T
 
-# 检测模式：
-if client.audio_enabled:
-    print("S2S 模式")
-else:
-    print("S2T 模式")
+# 参数验证（AudioPlayerMixin 提供）：
+client_error = QwenClient(api_key, voice="zhichu", audio_enabled=False)
+# ❌ ValueError: audio_enabled=False (S2T 模式) 不应该指定 voice 参数
 ```
 
 **文件**：
