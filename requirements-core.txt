@@ -1,0 +1,33 @@
+# Meeting Translator - Core Dependencies
+# 实时会议翻译系统核心依赖（所有提供商都需要）
+
+# Core Dependencies
+# 核心依赖
+numpy==1.24.3                       # 数值计算库
+pyaudio==0.2.14                    # 音频输入输出
+pyaudiowpatch==0.2.12.13 ; sys_platform == "win32"  # PyAudio WASAPI 补丁 (Windows)
+websockets==12.0                    # WebSocket 客户端
+python-dotenv==1.0.0               # 环境变量管理
+
+# GUI and UI
+# 图形界面
+PyQt5==5.15.10                     # Qt5 GUI 框架
+
+# Utilities
+# 工具库
+asyncio                            # 异步IO (Python 内置，无需安装)
+
+# Platform-specific Notes
+# 平台特定说明
+# Windows: PyAudio 可能需要手动安装
+#   pip install pipwin
+#   pipwin install pyaudio
+# 或下载 wheel 文件: https://www.lfd.uci.edu/~gohlke/pythonlibs/#pyaudio
+
+# Linux: 需要先安装 PortAudio
+#   Ubuntu/Debian: sudo apt-get install portaudio19-dev python3-pyaudio
+#   Fedora: sudo dnf install portaudio-devel
+#   macOS: brew install portaudio
+
+# 推荐使用 Python 3.9 - 3.11
+# Recommended Python version: 3.9 - 3.11

@@ -31,8 +31,8 @@ from translation_service import MeetingTranslationServiceWrapper
 from translation_mode import TranslationMode, ModeConfig
 from subtitle_window import SubtitleWindow
 from config_manager import ConfigManager
-from output_manager import OutputManager, MessageType
-from output_handlers import SubtitleHandler, ConsoleHandler, LogFileHandler
+from output_manager import Out, MessageType
+from output_handlers import SubtitleHandler, ConsoleHandler, LogFileHandler, AlertHandler
 from PyQt5.QtCore import qInstallMessageHandler, QtMsgType
 
 # 配置日志（只输出到文件，不输出到控制台）
@@ -50,8 +50,6 @@ logging.basicConfig(
         logging.FileHandler(log_file, encoding='utf-8')
     ]
 )
-logger = logging.getLogger(__name__)
-logger.info(f"日志文件: {log_file}")
 
 # 降低asyncio警告级别（抑制WebSocket关闭时的警告）
 logging.getLogger('asyncio').setLevel(logging.CRITICAL)
@@ -68,9 +66,6 @@ def qt_message_handler(msg_type, context, message):
     if "setGeometry" in message and "Unable to set geometry" in message:
         return  # 忽略这类警告
 
-    # 其他 Qt 警告可以记录到日志（可选）
-    # logger.warning(f"[Qt] {message}")
-
 
 class TranslationSignals(QObject):
     """翻译信号（用于线程间通信）"""
@@ -86,7 +81,6 @@ class MeetingTranslatorApp(QWidget):
 
         # 获取翻译服务提供商（将从 UI 选择器获取，默认 aliyun）
         self.provider = "aliyun"  # 初始默认值
-        logger.info(f"翻译服务提供商初始值: {self.provider} (将从UI更新)")
 
         # API Key 将由 TranslationClientFactory 根据 provider 自动加载
         # 这样可以确保每个提供商使用正确的 API Key
@@ -140,14 +134,15 @@ class MeetingTranslatorApp(QWidget):
 
     def _init_output_manager(self):
         """初始化 OutputManager 并添加 handlers"""
-        manager = OutputManager.get_instance()
+        manager = Out
 
         # 1. 添加控制台处理器（只显示翻译结果和错误，隐藏状态信息）
         console_handler = ConsoleHandler(
             enabled_types=[
                 MessageType.TRANSLATION,  # ✅ 显示最终翻译
                 MessageType.ERROR,        # ✅ 显示错误
-                MessageType.WARNING       # ✅ 显示警告
+                MessageType.WARNING,      # ✅ 显示警告
+                MessageType.USER_ALERT    # ✅ 显示用户提示
                 # ❌ 不包含 STATUS - 状态信息不显示在控制台
                 # ❌ 不包含 DEBUG - Token 用量不显示
             ]
@@ -163,17 +158,25 @@ class MeetingTranslatorApp(QWidget):
                 MessageType.STATUS,           # ✅ 状态信息
                 MessageType.ERROR,            # ✅ 错误
                 MessageType.WARNING,          # ✅ 警告
-                MessageType.DEBUG             # ✅ 调试信息（Token 用量等）
+                MessageType.DEBUG,            # ✅ 调试信息（Token 用量等）
+                MessageType.USER_ALERT        # ✅ 用户提示（弹窗内容记录到日志）
             ]
         )
         manager.add_handler(log_file_handler)
+
+        # 3. 添加用户提示处理器（显示 QMessageBox 弹窗）
+        alert_handler = AlertHandler(
+            parent_widget=self,  # 使用主窗口作为父窗口
+            show_dialog=True     # 启用弹窗显示
+        )
+        manager.add_handler(alert_handler)
 
         # 注意：SubtitleHandler 会在字幕窗口创建后添加
         # （见 start_listen_translation 方法）
 
     def _update_subtitle_handler(self):
         """更新或创建 SubtitleHandler"""
-        manager = OutputManager.get_instance()
+        manager = Out
 
         # 如果字幕窗口已存在，添加 SubtitleHandler
         if self.subtitle_window:
@@ -187,7 +190,6 @@ class MeetingTranslatorApp(QWidget):
                 subtitle_handler = SubtitleHandler(self.subtitle_window)
                 subtitle_handler.moveToThread(self.thread())  # 确保在主线程
                 manager.add_handler(subtitle_handler)
-                logger.info("已添加 SubtitleHandler 到 OutputManager")
 
     @staticmethod
     def get_virtual_audio_device_name():
@@ -236,9 +238,8 @@ class MeetingTranslatorApp(QWidget):
                 )
 
                 self.setStyleSheet(stylesheet)
-                logger.info(f"已加载现代化样式表 (字体: {font_family})")
         except Exception as e:
-            logger.warning(f"无法加载样式表: {e}，使用默认样式")
+            Out.warning(f"无法加载样式表: {e}，使用默认样式")
 
     def init_ui(self):
         """初始化UI"""
@@ -435,8 +436,6 @@ class MeetingTranslatorApp(QWidget):
             self.listen_device_widget.show()
             self.speak_device_widget.show()
 
-        logger.info(f"切换到模式: {self.current_mode.value}")
-
     def on_listen_device_selected(self, index):
         """听模式设备选择事件"""
         device = self.listen_device_combo.itemData(index)
@@ -490,13 +489,31 @@ class MeetingTranslatorApp(QWidget):
         new_provider = self.provider_combo.itemData(index)
         if new_provider and new_provider != self.provider:
             old_provider = self.provider
+
+            # 检查依赖（针对需要特定依赖的提供商）
+            if new_provider == "doubao":
+                from doubao_client import DoubaoClient
+                is_available, error_msg = DoubaoClient.check_dependencies()
+                if not is_available:
+                    # 使用 OutputManager 显示错误提示
+                    Out.user_alert(
+                        message=error_msg,
+                        title="依赖缺失"
+                    )
+
+                    # 回滚到原来的提供商
+                    # 找到原来提供商的索引
+                    for i in range(self.provider_combo.count()):
+                        if self.provider_combo.itemData(i) == old_provider:
+                            self.provider_combo.setCurrentIndex(i)
+                            break
+                    return  # 不继续处理
+
             self.provider = new_provider
 
             # 更新显示
             provider_name = self.provider_combo.currentText()
             self.provider_info.setText(f"当前: {provider_name}")
-
-            logger.info(f"API提供商切换: {old_provider} -> {self.provider}")
 
             # 重新加载该提供商支持的语音音色
             self._load_provider_voices()
@@ -552,7 +569,6 @@ class MeetingTranslatorApp(QWidget):
             device = combo.itemData(i)
             if device.get('is_wasapi_loopback'):
                 combo.setCurrentIndex(i)
-                logger.info(f"自动选择 WASAPI Loopback: {device['name']}")
                 return
 
         # 次选传统 loopback
@@ -560,7 +576,6 @@ class MeetingTranslatorApp(QWidget):
             device = combo.itemData(i)
             if device.get('is_loopback'):
                 combo.setCurrentIndex(i)
-                logger.info(f"自动选择 Loopback: {device['name']}")
                 return
 
     def _auto_select_virtual_device(self, combo: QComboBox):
@@ -573,7 +588,6 @@ class MeetingTranslatorApp(QWidget):
                 device = combo.itemData(i)
                 if device['index'] == 14:
                     combo.setCurrentIndex(i)
-                    logger.info(f"自动选择虚拟设备（索引 14）: {device['name']}")
                     return
 
         # 备选：任何匹配的虚拟音频设备
@@ -581,7 +595,6 @@ class MeetingTranslatorApp(QWidget):
             device = combo.itemData(i)
             if any(pattern in device['name'] for pattern in device_patterns):
                 combo.setCurrentIndex(i)
-                logger.info(f"自动选择虚拟设备: {device['name']}")
                 return
 
     def _load_provider_voices(self):
@@ -593,7 +606,7 @@ class MeetingTranslatorApp(QWidget):
 
         if not voices:
             # 如果提供商没有定义声音，使用默认值
-            logger.warning(f"提供商 {self.provider} 没有定义声音，使用默认值")
+            Out.warning(f"提供商 {self.provider} 没有定义声音，使用默认值")
             self.voice_combo.addItem("默认声音", "")
             return
 
@@ -609,28 +622,15 @@ class MeetingTranslatorApp(QWidget):
                     self.voice_combo.setCurrentIndex(i)
                     break
 
-        logger.info(f"已加载 {self.provider} 提供商的 {len(voices)} 个声音")
 
     def load_config(self):
         """加载保存的配置"""
-        logger.info("=" * 60)
-        logger.info("开始加载上次保存的配置...")
-
-        # 显示所有配置项（用于调试）
-        logger.info(f"  Provider: {self.config_manager.get_provider()}")
-        logger.info(f"  模式: {self.config_manager.get_mode()}")
-        logger.info(f"  听模式设备: {self.config_manager.get_listen_device_name()}")
-        logger.info(f"  说模式输入: {self.config_manager.get_speak_input_device_name()}")
-        logger.info(f"  说模式输出: {self.config_manager.get_speak_output_device_name()}")
-        logger.info(f"  语音音色: {self.config_manager.get_voice()}")
-
         # 1. 恢复 API 提供商
         saved_provider = self.config_manager.get_provider()
         for i in range(self.provider_combo.count()):
             provider = self.provider_combo.itemData(i)
             if provider == saved_provider:
                 self.provider_combo.setCurrentIndex(i)
-                logger.info(f"✓ 恢复 API 提供商: {saved_provider}")
                 break
 
         # 2. 恢复翻译模式
@@ -639,7 +639,6 @@ class MeetingTranslatorApp(QWidget):
             mode = self.mode_combo.itemData(i)
             if mode.value == saved_mode:
                 self.mode_combo.setCurrentIndex(i)
-                logger.info(f"✓ 恢复模式: {saved_mode}")
                 break
 
         # 2. 恢复听模式设备（通过名字匹配）
@@ -663,11 +662,7 @@ class MeetingTranslatorApp(QWidget):
         for i in range(self.voice_combo.count()):
             if self.voice_combo.itemData(i) == saved_voice:
                 self.voice_combo.setCurrentIndex(i)
-                logger.info(f"✓ 恢复语音音色: {saved_voice}")
                 break
-
-        logger.info("配置加载完成")
-        logger.info("=" * 60)
 
     def _select_device_by_name(self, combo: QComboBox, device_name: str, device_type: str):
         """通过设备名字选择设备"""
@@ -675,25 +670,18 @@ class MeetingTranslatorApp(QWidget):
             device = combo.itemData(i)
             if device and device['name'] == device_name:
                 combo.setCurrentIndex(i)
-                logger.info(f"✓ 恢复{device_type}: {device_name}")
                 return
-        logger.warning(f"⚠ 未找到{device_type}: {device_name}（设备可能已变化，使用默认值）")
+        Out.warning(f"⚠ 未找到{device_type}: {device_name}（设备可能已变化，使用默认值）")
 
     def toggle_translation(self):
         """启动/停止翻译"""
         if not self.is_running:
             self.start_translation()
         else:
-            logger.info("[TOGGLE] Calling stop_translation...")
             self.stop_translation()
-            logger.info("[TOGGLE] stop_translation returned!")
-            import sys
-            sys.stdout.flush()
-            sys.stderr.flush()
 
     def start_translation(self):
         """启动翻译（根据模式）"""
-        logger.info(f"启动翻译（模式：{self.current_mode.value}）...")
         self.update_status("正在启动...", "running")
 
         try:
@@ -705,7 +693,7 @@ class MeetingTranslatorApp(QWidget):
                 self._start_listen_mode()
                 self._start_speak_mode()
         except Exception as e:
-            logger.error(f"启动翻译失败: {e}", exc_info=True)
+            Out.error(f"启动翻译失败: {e}", exc_info=True)
             # 恢复 UI 状态
             self.update_status(f"启动失败: {str(e)}", "error")
             # 清理可能已启动的组件
@@ -733,12 +721,8 @@ class MeetingTranslatorApp(QWidget):
 
             self.update_status("翻译进行中...", "running")
 
-            logger.info("翻译已启动")
-
         except Exception as e:
-            logger.error(f"启动翻译失败: {e}")
-            import traceback
-            traceback.print_exc()
+            Out.error(f"启动翻译失败: {e}", exc_info=True)
             self.update_status(f"启动失败: {str(e)}", "error")
 
             # 清理
@@ -746,8 +730,6 @@ class MeetingTranslatorApp(QWidget):
 
     def _start_listen_mode(self):
         """启动听模式（会议音频→中文字幕）"""
-        logger.info("启动听模式...")
-
         # 获取设备
         device = self.listen_device_combo.currentData()
         if not device:
@@ -777,8 +759,6 @@ class MeetingTranslatorApp(QWidget):
         device_sample_rate = device['sample_rate']
         device_channels = device['channels']
 
-        logger.info(f"听模式设备: {device['name']}, {device_sample_rate}Hz, {device_channels}声道")
-
         # 根据 provider 确定目标采样率
         if self.provider == "openai":
             target_sample_rate = 24000  # OpenAI Realtime API 需要 24kHz
@@ -795,12 +775,8 @@ class MeetingTranslatorApp(QWidget):
         )
         self.listen_audio_capture.start()
 
-        logger.info("听模式已启动")
-
     def _start_speak_mode(self):
         """启动说模式（中文麦克风→英文虚拟麦克风）"""
-        logger.info("启动说模式...")
-
         # 获取设备
         input_device = self.speak_input_combo.currentData()
         output_device = self.speak_output_combo.currentData()
@@ -813,7 +789,6 @@ class MeetingTranslatorApp(QWidget):
         # 1. 启动音频输出线程（虚拟麦克风）
         # 使用自适应变速功能，在队列堆积时自动加速播放
         try:
-            logger.info("正在创建音频输出线程...")
             # 使用设备的实际采样率，避免音频失真
             device_output_rate = output_device.get('sample_rate', 48000)
 
@@ -832,11 +807,9 @@ class MeetingTranslatorApp(QWidget):
                 target_catchup_time=10.0,  # 10秒内追上进度
                 max_chunks_per_batch=50  # 单次最多处理50个chunks
             )
-            logger.info("音频输出线程已创建，正在启动...")
             self.speak_audio_output.start()
-            logger.info("音频输出线程启动成功")
         except Exception as e:
-            logger.error(f"启动音频输出线程失败: {e}", exc_info=True)
+            Out.error(f"启动音频输出线程失败: {e}", exc_info=True)
             raise
 
         # 2. 启动翻译服务（中→英，音频输出）
@@ -844,7 +817,6 @@ class MeetingTranslatorApp(QWidget):
         selected_voice = self.voice_combo.currentData()  # "Cherry" 或 "Nofish"
 
         try:
-            logger.info("正在创建翻译服务...")
             self.speak_translation_service = MeetingTranslationServiceWrapper(
                 api_key=self.api_key,
                 on_translation=self.on_speak_translation,
@@ -856,11 +828,9 @@ class MeetingTranslatorApp(QWidget):
                 provider=self.provider,
                 on_error=self.on_service_error_callback
             )
-            logger.info("翻译服务已创建，正在启动...")
             self.speak_translation_service.start()
-            logger.info("翻译服务启动成功")
         except Exception as e:
-            logger.error(f"启动翻译服务失败: {e}", exc_info=True)
+            Out.error(f"启动翻译服务失败: {e}", exc_info=True)
             # 清理已启动的音频输出
             if self.speak_audio_output:
                 try:
@@ -873,10 +843,6 @@ class MeetingTranslatorApp(QWidget):
         input_sample_rate = input_device['sample_rate']
         input_channels = input_device['channels']
 
-        logger.info(f"说模式输入: {input_device['name']}, {input_sample_rate}Hz, {input_channels}声道")
-        logger.info(f"说模式输出: {output_device['name']}")
-        logger.info(f"英文语音音色: {selected_voice}")
-
         # 根据 provider 确定目标采样率
         if self.provider == "openai":
             target_sample_rate = 24000  # OpenAI Realtime API 需要 24kHz
@@ -884,7 +850,6 @@ class MeetingTranslatorApp(QWidget):
             target_sample_rate = 16000  # 阿里云需要 16kHz
 
         try:
-            logger.info("正在创建音频捕获线程...")
             self.speak_audio_capture = AudioCaptureThread(
                 device_index=input_device['index'],
                 on_audio_chunk=self.speak_translation_service.send_audio_chunk,
@@ -893,11 +858,9 @@ class MeetingTranslatorApp(QWidget):
                 target_sample_rate=target_sample_rate,
                 target_channels=1
             )
-            logger.info("音频捕获线程已创建，正在启动...")
             self.speak_audio_capture.start()
-            logger.info("音频捕获线程启动成功")
         except Exception as e:
-            logger.error(f"启动音频捕获失败: {e}", exc_info=True)
+            Out.error(f"启动音频捕获失败: {e}", exc_info=True)
             # 清理已启动的组件
             if self.speak_translation_service:
                 try:
@@ -911,8 +874,6 @@ class MeetingTranslatorApp(QWidget):
                     pass
             raise
 
-        logger.info("说模式已启动")
-
     def stop_translation(self, save_subtitles=True):
         """
         停止翻译
@@ -920,8 +881,6 @@ class MeetingTranslatorApp(QWidget):
         Args:
             save_subtitles: 是否保存字幕（默认True）
         """
-        logger.info("停止翻译...")
-
         try:
             # 1. 保存字幕（如果有内容）
             if save_subtitles and self.subtitle_window:
@@ -931,27 +890,24 @@ class MeetingTranslatorApp(QWidget):
 
                     filepath = self.subtitle_window.save_subtitles(save_dir)
                     if filepath:
-                        logger.info(f"✅ 字幕已保存: {filepath}")
                         self.update_status(f"已保存到: {os.path.basename(filepath)}", "ready")
                 except Exception as e:
-                    logger.error(f"保存字幕失败: {e}", exc_info=True)
+                    Out.error(f"保存字幕失败: {e}", exc_info=True)
 
             # 2. 停止听模式
             try:
                 if self.listen_audio_capture:
-                    logger.debug("正在停止听模式音频捕获...")
                     self.listen_audio_capture.stop()
                     self.listen_audio_capture = None
-                    logger.debug("听模式音频捕获已停止")
             except Exception as e:
-                logger.error(f"停止音频捕获时出错: {e}", exc_info=True)
+                Out.error(f"停止音频捕获时出错: {e}", exc_info=True)
 
             try:
                 if self.listen_translation_service:
                     self.listen_translation_service.stop()
                     self.listen_translation_service = None
             except Exception as e:
-                logger.error(f"停止听模式翻译服务时出错: {e}", exc_info=True)
+                Out.error(f"停止听模式翻译服务时出错: {e}", exc_info=True)
 
             # 3. 停止说模式
             try:
@@ -959,21 +915,21 @@ class MeetingTranslatorApp(QWidget):
                     self.speak_audio_capture.stop()
                     self.speak_audio_capture = None
             except Exception as e:
-                logger.error(f"停止说模式音频捕获时出错: {e}", exc_info=True)
+                Out.error(f"停止说模式音频捕获时出错: {e}", exc_info=True)
 
             try:
                 if self.speak_translation_service:
                     self.speak_translation_service.stop()
                     self.speak_translation_service = None
             except Exception as e:
-                logger.error(f"停止说模式翻译服务时出错: {e}", exc_info=True)
+                Out.error(f"停止说模式翻译服务时出错: {e}", exc_info=True)
 
             try:
                 if self.speak_audio_output:
                     self.speak_audio_output.stop()
                     self.speak_audio_output = None
             except Exception as e:
-                logger.error(f"停止音频输出时出错: {e}", exc_info=True)
+                Out.error(f"停止音频输出时出错: {e}", exc_info=True)
 
             # 4. 更新 UI
             self.is_running = False
@@ -994,13 +950,11 @@ class MeetingTranslatorApp(QWidget):
                 if not save_subtitles:
                     self.update_status("就绪", "ready")
             except Exception as e:
-                logger.error(f"更新UI时出错: {e}", exc_info=True)
-
-            logger.info("翻译已停止")
+                Out.error(f"更新UI时出错: {e}", exc_info=True)
 
         except Exception as e:
             # 捕获整个stop_translation过程中的任何未捕获异常
-            logger.critical(f"stop_translation发生严重错误: {e}", exc_info=True)
+            Out.error(f"stop_translation发生严重错误: {e}", exc_info=True)
             # 确保UI状态正确
             self.is_running = False
             try:
@@ -1026,9 +980,8 @@ class MeetingTranslatorApp(QWidget):
 
     def on_speak_translation(self, source_text: str, target_text: str, is_final: bool = True):
         """说模式翻译回调（在独立线程中调用）"""
-        # 说模式只需要音频输出，文本可选记录
-        if is_final:
-            logger.info(f"[说模式翻译] {source_text} → {target_text}")
+        # 说模式只需要音频输出，文本通过OutputManager输出
+        pass
 
     def on_translation_received(self, source_text: str, target_text: str, is_final: bool = True):
         """
@@ -1039,15 +992,6 @@ class MeetingTranslatorApp(QWidget):
             target_text: 目标语言文本
             is_final: 是否为最终文本（True=已finalize，False=增量文本）
         """
-        if is_final:
-            # 如果 source_text 已经包含 "[译]" 前缀，则不重复显示
-            if source_text.startswith("[译]"):
-                logger.info(f"翻译: {target_text}")
-            else:
-                logger.info(f"翻译: {source_text} -> {target_text}")
-        else:
-            logger.debug(f"增量翻译: {target_text}")
-
         # 更新字幕窗口
         if self.subtitle_window:
             self.subtitle_window.update_subtitle(source_text, target_text, is_final=is_final)
@@ -1061,7 +1005,6 @@ class MeetingTranslatorApp(QWidget):
             error_message: 用户友好的错误消息
             exception: 原始异常对象
         """
-        logger.error(f"服务错误: {error_message}")
         # 发送信号到主线程
         self.signals.error_occurred.emit(error_message, exception)
 
@@ -1093,10 +1036,6 @@ class MeetingTranslatorApp(QWidget):
 
     def closeEvent(self, event):
         """关闭事件"""
-        logger.info("=" * 60)
-        logger.info("[CLOSE-EVENT] 主窗口关闭事件被触发")
-        logger.info(f"[CLOSE-EVENT] is_running={self.is_running}")
-        logger.info("=" * 60)
         import sys
         sys.stdout.flush()
         sys.stderr.flush()
@@ -1112,7 +1051,6 @@ class MeetingTranslatorApp(QWidget):
         if self.device_manager:
             self.device_manager.cleanup()
 
-        logger.info("[CLOSE-EVENT] 主窗口即将关闭")
         event.accept()
 
 
@@ -1123,7 +1061,7 @@ def exception_hook(exc_type, exc_value, exc_traceback):
         sys.__excepthook__(exc_type, exc_value, exc_traceback)
         return
 
-    logger.critical("未捕获的异常:", exc_info=(exc_type, exc_value, exc_traceback))
+    Out.error("未捕获的异常", exc_info=True)
 
 
 def main():
@@ -1146,13 +1084,10 @@ def main():
         window = MeetingTranslatorApp()
         window.show()
 
-        logger.info("进入主事件循环")
         exit_code = app.exec_()
-        logger.info(f"主事件循环已退出，退出码: {exit_code}")
-
         sys.exit(exit_code)
     except Exception as e:
-        logger.critical(f"主函数发生异常: {e}", exc_info=True)
+        Out.error(f"主函数发生异常: {e}", exc_info=True)
         sys.exit(1)
 
 

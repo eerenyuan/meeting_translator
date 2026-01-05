@@ -1,0 +1,11 @@
+# Meeting Translator - OpenAI Provider Dependencies
+# OpenAI Realtime API 提供商特定依赖
+
+# OpenAI Realtime API does not require any additional dependencies
+# OpenAI Realtime API 不需要额外依赖
+# All dependencies are included in requirements-core.txt
+# 所有依赖已包含在 requirements-core.txt 中
+
+# Installation:
+# 安装方法:
+# pip install -r requirements-core.txt

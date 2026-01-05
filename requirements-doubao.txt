@@ -1,0 +1,11 @@
+# Meeting Translator - Doubao Provider Dependencies
+# 豆包 (ByteDance Doubao) 提供商特定依赖
+
+# Doubao AST API requires Protocol Buffers
+# 豆包 AST API 需要 Protocol Buffers
+protobuf>=4.25.1                   # Protocol Buffers (用于 Doubao API gRPC)
+
+# Installation:
+# 安装方法:
+# pip install -r requirements-core.txt
+# pip install -r requirements-doubao.txt

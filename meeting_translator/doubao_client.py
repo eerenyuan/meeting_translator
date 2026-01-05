@@ -19,15 +19,6 @@ import threading
 from typing import Callable, Optional, Dict
 import io
 
-# Try to import av (PyAV) for Opus decoding
-try:
-    import av
-    AV_AVAILABLE = True
-except ImportError:
-    AV_AVAILABLE = False
-    print("[WARN] PyAV not installed. Doubao audio playback requires PyAV.")
-    print("[WARN] Install with: pip install av")
-
 from translation_client_base import BaseTranslationClient
 from livetranslate_client import load_glossary
 
@@ -37,8 +28,16 @@ protogen_dir = os.path.join(current_dir, "python_protogen")
 if protogen_dir not in sys.path:
     sys.path.insert(0, protogen_dir)
 
-from python_protogen.products.understanding.ast.ast_service_pb2 import TranslateRequest, TranslateResponse
-from python_protogen.common.events_pb2 import Type
+# Try to import protobuf dependencies (required for Doubao)
+try:
+    from python_protogen.products.understanding.ast.ast_service_pb2 import TranslateRequest, TranslateResponse
+    from python_protogen.common.events_pb2 import Type
+    PROTOBUF_AVAILABLE = True
+except ImportError:
+    PROTOBUF_AVAILABLE = False
+    TranslateRequest = None
+    TranslateResponse = None
+    Type = None
 
 
 class DoubaoClient(BaseTranslationClient):
@@ -123,6 +122,21 @@ class DoubaoClient(BaseTranslationClient):
         return {
             "default": "Default (Auto)"
         }
+
+    @staticmethod
+    def check_dependencies() -> tuple[bool, str]:
+        """
+        Check if Doubao dependencies are installed
+
+        Returns:
+            (is_available, error_message)
+            - is_available: True if all dependencies are met
+            - error_message: Error message if dependencies are missing
+        """
+        if not PROTOBUF_AVAILABLE:
+            return False, "豆包 API 需要 protobuf 依赖包。请运行: pip install protobuf"
+
+        return True, ""
 
     async def connect(self):
         """Establish WebSocket connection to Doubao AST API"""
@@ -385,46 +399,6 @@ class DoubaoClient(BaseTranslationClient):
             daemon=True
         )
         self.audio_player_thread.start()
-
-    def _decode_opus_to_pcm(self, opus_data: bytes) -> bytes:
-        """Decode Opus audio data to PCM using PyAV"""
-        if not AV_AVAILABLE:
-            print("[ERROR] PyAV not available, cannot decode Opus audio")
-            return b''
-
-        try:
-            # Create a BytesIO object from opus data
-            input_stream = io.BytesIO(opus_data)
-
-            # Open container (ogg with opus codec)
-            container = av.open(input_stream, format='ogg')
-
-            # Get audio stream
-            audio_stream = container.streams.audio[0]
-
-            # Decode frames
-            pcm_frames = []
-            for frame in container.decode(audio=0):
-                # Resample to target rate if needed
-                frame = frame.reformat(
-                    format='s16',  # 16-bit signed PCM
-                    layout='mono',  # Mono
-                    rate=self.output_rate  # 24kHz
-                )
-                # Convert to bytes
-                pcm_frames.append(frame.to_ndarray().tobytes())
-
-            container.close()
-
-            # Combine all frames
-            pcm_data = b''.join(pcm_frames)
-            return pcm_data
-
-        except Exception as e:
-            print(f"[ERROR] Opus decode failed: {e}")
-            import traceback
-            traceback.print_exc()
-            return b''  # Return empty data on failure
 
     def _audio_player_task(self):
         """Audio playback thread"""

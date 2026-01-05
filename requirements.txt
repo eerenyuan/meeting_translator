@@ -1,40 +1,51 @@
 # Meeting Translator - Dependencies
 # 实时会议翻译系统依赖包
 
-# Core Dependencies
-# 核心依赖
-numpy==1.24.3                       # 数值计算库
-pyaudio==0.2.14                    # 音频输入输出
-pyaudiowpatch==0.2.12.13 ; sys_platform == "win32"           # PyAudio WASAPI 补丁 (Windows)
-websockets==12.0                    # WebSocket 客户端
-python-dotenv==1.0.0               # 环境变量管理
-protobuf>=4.25.1                   # Protocol Buffers (用于 Doubao API)
-av>=10.0.0                          # PyAV - FFmpeg bindings (用于 Doubao Opus 解码)
+# ========================================
+# Installation Instructions / 安装说明
+# ========================================
 
-# GUI and UI
-# 图形界面
-PyQt5==5.15.10                     # Qt5 GUI 框架
+# Option 1: Install core dependencies (Aliyun, OpenAI)
+# 选项 1：安装核心依赖（阿里云、OpenAI）
+#   pip install -r requirements-core.txt
 
-# Utilities
-# 工具库
-asyncio                            # 异步IO (Python 内置，无需安装)
+# Option 2: Install core + Doubao dependencies
+# 选项 2：安装核心依赖 + 豆包依赖
+#   pip install -r requirements-core.txt
+#   pip install -r requirements-doubao.txt
 
-# Optional: Development Tools
-# 可选：开发工具
-# pytest==7.4.3                    # 单元测试
-# black==23.12.0                   # 代码格式化
+# Option 3: Install ALL dependencies (all providers)
+# 选项 3：安装完整依赖（所有提供商）
+#   pip install -r requirements-all.txt
 
-# Platform-specific Notes
-# 平台特定说明
-# Windows: PyAudio 可能需要手动安装
-#   pip install pipwin
-#   pipwin install pyaudio
-# 或下载 wheel 文件: https://www.lfd.uci.edu/~gohlke/pythonlibs/#pyaudio
+# ========================================
+# Quick Start / 快速开始
+# ========================================
 
-# Linux: 需要先安装 PortAudio
-#   Ubuntu/Debian: sudo apt-get install portaudio19-dev python3-pyaudio
-#   Fedora: sudo dnf install portaudio-devel
-#   macOS: brew install portaudio
+# For Aliyun Qwen (default):
+# 阿里云 Qwen（默认）:
+#   pip install -r requirements-core.txt
 
-# 推荐使用 Python 3.9 - 3.11
-# Recommended Python version: 3.9 - 3.11
+# For Doubao (ByteDance):
+# 豆包（字节跳动）:
+#   pip install -r requirements-core.txt
+#   pip install -r requirements-doubao.txt
+
+# For OpenAI Realtime:
+# OpenAI Realtime:
+#   pip install -r requirements-core.txt
+
+# ========================================
+# Requirements Files / 依赖文件说明
+# ========================================
+# - requirements-core.txt    : Core dependencies (all providers)
+#                            核心依赖（所有提供商）
+# - requirements-aliyun.txt  : Aliyun-specific (empty, uses core only)
+#                            阿里云特定依赖（空，仅使用核心依赖）
+# - requirements-doubao.txt  : Doubao-specific (protobuf)
+#                            豆包特定依赖（protobuf）
+# - requirements-openai.txt  : OpenAI-specific (empty, uses core only)
+#                            OpenAI 特定依赖（空，仅使用核心依赖）
+# - requirements-all.txt     : All dependencies combined
+#                            所有依赖合并
+

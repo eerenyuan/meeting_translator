@@ -8,6 +8,7 @@ from enum import Enum
 from typing import Optional, Dict, Any, List
 from dataclasses import dataclass, field
 import logging
+import sys
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
@@ -26,6 +27,9 @@ class MessageType(Enum):
     STATUS = "status"                # 状态信息（连接、断开、启动、停止等）
     ERROR = "error"                  # 错误信息
     WARNING = "warning"              # 警告信息
+
+    # 用户相关
+    USER_ALERT = "user_alert"        # 用户提示/弹窗（QMessageBox）
 
     # 调试相关
     DEBUG = "debug"                  # 调试信息（默认不显示）
@@ -267,17 +271,27 @@ class OutputManager:
         )
         self.emit(msg)
 
-    def error(self, message: str, metadata: Dict[str, Any] = None):
+    def error(self, message: str, exc_info=False, metadata: Dict[str, Any] = None):
         """
         发送错误信息
 
         Args:
             message: 错误消息
+            exc_info: 是否包含异常堆栈信息（True=包含，会附加到message后）
             metadata: 元数据
         """
+        import traceback
+
+        final_message = message
+        if exc_info:
+            # 附加堆栈信息
+            traceback_str = ''.join(traceback.format_exception(*metadata.get('exc_info', None) if metadata.get('exc_info') else sys.exc_info()))
+            if traceback_str:
+                final_message = f"{message}\n{traceback_str}"
+
         msg = TranslationMessage(
             message_type=MessageType.ERROR,
-            target_text=message,
+            target_text=final_message,
             metadata=metadata or {}
         )
         self.emit(msg)
@@ -312,11 +326,37 @@ class OutputManager:
         )
         self.emit(msg)
 
+    def user_alert(self, message: str, title: str = "提示",
+                   metadata: Dict[str, Any] = None):
+        """
+        显示用户提示（弹窗 + 日志 + 控制台）
+
+        Args:
+            message: 提示内容
+            title: 弹窗标题（默认 "提示"）
+            metadata: 元数据
+        """
+        msg = TranslationMessage(
+            message_type=MessageType.USER_ALERT,
+            target_text=f"{title}|{message}",
+            metadata=metadata or {}
+        )
+        self.emit(msg)
+
 
 # 全局便捷函数
 def get_output_manager() -> OutputManager:
     """获取OutputManager单例"""
     return OutputManager.get_instance()
+
+
+# ========== 模块级单例 ==========
+# 提供简洁的全局访问点
+# 使用示例：
+#   from output_manager import Out
+#   Out.error("启动失败", exc_info=True)
+#   Out.translation("你好", source_text="Hello")
+Out = OutputManager.get_instance()
 
 
 # 测试代码

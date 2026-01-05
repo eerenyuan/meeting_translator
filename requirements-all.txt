@@ -1,0 +1,45 @@
+# Meeting Translator - All Dependencies
+# 实时会议翻译系统完整依赖包（包含所有提供商）
+
+# This file includes all dependencies for all providers
+# 本文件包含所有提供商的依赖
+
+# Install with: pip install -r requirements-all.txt
+# 安装方法: pip install -r requirements-all.txt
+
+# Core Dependencies (from requirements-core.txt)
+numpy==1.24.3                       # 数值计算库
+pyaudio==0.2.14                    # 音频输入输出
+pyaudiowpatch==0.2.12.13 ; sys_platform == "win32"  # PyAudio WASAPI 补丁 (Windows)
+websockets==12.0                    # WebSocket 客户端
+python-dotenv==1.0.0               # 环境变量管理
+PyQt5==5.15.10                     # Qt5 GUI 框架
+
+# Provider-Specific Dependencies
+# 提供商特定依赖
+
+# Doubao (ByteDance)
+protobuf>=4.25.1                   # Protocol Buffers (用于 Doubao API)
+
+# Aliyun (Alibaba Cloud) - No additional dependencies
+# OpenAI - No additional dependencies
+
+# Optional: Development Tools
+# 可选：开发工具
+# pytest==7.4.3                    # 单元测试
+# black==23.12.0                   # 代码格式化
+
+# Platform-specific Notes
+# 平台特定说明
+# Windows: PyAudio 可能需要手动安装
+#   pip install pipwin
+#   pipwin install pyaudio
+# 或下载 wheel 文件: https://www.lfd.uci.edu/~gohlke/pythonlibs/#pyaudio
+
+# Linux: 需要先安装 PortAudio
+#   Ubuntu/Debian: sudo apt-get install portaudio19-dev python3-pyaudio
+#   Fedora: sudo dnf install portaudio-devel
+#   macOS: brew install portaudio
+
+# 推荐使用 Python 3.9 - 3.11
+# Recommended Python version: 3.9 - 3.11

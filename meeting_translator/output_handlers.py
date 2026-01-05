@@ -7,6 +7,7 @@ import logging
 from typing import Optional, List
 from datetime import datetime
 from PyQt5.QtCore import QObject, pyqtSignal
+from PyQt5.QtWidgets import QMessageBox
 from output_manager import BaseHandler, TranslationMessage, MessageType, IncrementalMode
 
 logger = logging.getLogger(__name__)
@@ -177,6 +178,15 @@ class ConsoleHandler(BaseHandler):
             # 警告信息
             return f"[警告] {message.target_text}"
 
+        elif message.message_type == MessageType.USER_ALERT:
+            # 用户提示（解析"标题|内容"格式）
+            text = message.target_text
+            if "|" in text:
+                title, content = text.split("|", 1)
+                return f"[提示] {title}: {content}"
+            else:
+                return f"[提示] {text}"
+
         return message.target_text
 
 
@@ -294,6 +304,75 @@ class MultiHandler(BaseHandler):
         """分发到所有子处理器"""
         for handler in self.handlers:
             handler.handle(message)
+
+
+class AlertHandler(BaseHandler, QObject):
+    """
+    用户提示处理器
+    显示 QMessageBox 弹窗，同时支持日志记录
+    """
+
+    # 定义信号（线程安全）
+    _show_alert_signal = pyqtSignal(str, str)  # (title, message)
+
+    def __init__(self, parent_widget=None, show_dialog=True, enabled_types=None):
+        """
+        初始化用户提示处理器
+
+        Args:
+            parent_widget: 父窗口（QMessageBox 的父对象）
+            show_dialog: 是否显示弹窗（测试时可设为 False）
+            enabled_types: 启用的消息类型
+        """
+        # 默认只处理 USER_ALERT
+        default_types = [MessageType.USER_ALERT]
+        BaseHandler.__init__(self, enabled_types=enabled_types or default_types)
+        QObject.__init__(self)
+
+        self.parent_widget = parent_widget
+        self.show_dialog = show_dialog
+
+        # 连接信号到槽（在主线程中执行弹窗显示）
+        self._show_alert_signal.connect(self._show_alert_dialog)
+
+    def emit(self, message: TranslationMessage):
+        """
+        显示用户提示（线程安全）
+
+        Args:
+            message: 翻译消息
+        """
+        # 从 target_text 解析标题和内容
+        # 格式: "标题|内容" 或纯内容
+        text = message.target_text
+
+        if "|" in text:
+            title, content = text.split("|", 1)
+        else:
+            # 如果没有分隔符，使用默认标题
+            title = "提示"
+            content = text
+
+        # 发射信号（线程安全）
+        if self.show_dialog:
+            self._show_alert_signal.emit(title, content)
+
+    def _show_alert_dialog(self, title: str, content: str):
+        """
+        在主线程中显示弹窗
+
+        Args:
+            title: 弹窗标题
+            content: 弹窗内容
+        """
+        if not self.show_dialog:
+            return  # 静默模式，不显示弹窗
+
+        try:
+            # 使用 warning 图标显示提示
+            QMessageBox.warning(self.parent_widget, title, content)
+        except Exception as e:
+            logger.error(f"显示弹窗失败: {e}")
 
 
 # 测试代码
