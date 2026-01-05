@@ -99,7 +99,6 @@ class AudioPlayerMixin:
             return
 
         import pyaudio
-        import logger
 
         self._audio_queue = queue.Queue()
         self._stop_audio_event = asyncio.Event()
@@ -118,7 +117,7 @@ class AudioPlayerMixin:
                     frames_per_buffer=4096
                 )
 
-                logger.info(f"🔊 音频播放线程已启动 (rate={self.output_rate}Hz)")
+                self.output_debug(f"🔊 音频播放线程已启动 (rate={self.output_rate}Hz)")
 
                 while not self._stop_audio_event.is_set():
                     try:
@@ -134,16 +133,16 @@ class AudioPlayerMixin:
                     except queue.Empty:
                         continue
                     except Exception as e:
-                        logger.error(f"音频播放错误: {e}")
+                        self.output_error(f"音频播放错误: {e}")
 
                 # 清理
                 stream.stop_stream()
                 stream.close()
                 p.terminate()
-                logger.info("🔇 音频播放线程已停止")
+                self.output_debug("🔇 音频播放线程已停止")
 
             except Exception as e:
-                logger.error(f"音频播放线程初始化失败: {e}")
+                self.output_error(f"音频播放线程初始化失败: {e}")
 
         # 启动音频播放线程
         self._audio_thread = Thread(target=audio_player_loop, daemon=True)
@@ -158,8 +157,6 @@ class AudioPlayerMixin:
         if self._audio_thread is None or not self._audio_thread.is_alive():
             return
 
-        import logger
-
         # 发送停止信号
         self._stop_audio_event.set()
 
@@ -171,7 +168,7 @@ class AudioPlayerMixin:
         self._audio_thread.join(timeout=2.0)
 
         if self._audio_thread.is_alive():
-            logger.warning("音频播放线程未能在2秒内停止")
+            self.output_warning("音频播放线程未能在2秒内停止")
 
         self._audio_thread = None
         self._audio_queue = None
