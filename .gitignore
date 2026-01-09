@@ -83,3 +83,7 @@ docs/.doctrees/
 *.tmp
 *.temp
 nul
+
+# UV cache (uv package manager)
+.uv/
+# Note: uv.lock is committed for reproducible builds
