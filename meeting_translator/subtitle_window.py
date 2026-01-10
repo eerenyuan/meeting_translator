@@ -158,11 +158,23 @@ class SubtitleWindow(QWidget):
 
         # 添加历史记录（白色，已确定）
         for line in self.subtitle_history:
-            html_parts.append(
-                f'<p style="color: #FFFFFF; margin: 8px 0; font-weight: bold; '
-                f'text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.8);">'
-                f'{self._escape_html(line)}</p>'
-            )
+            # Check if this is bilingual format (contains newline + arrow)
+            if '\n' in line and '→' in line:
+                # Split into English and Chinese parts
+                parts = line.split('\n')
+                english_part = self._escape_html(parts[0])  # [timestamp] English text
+                chinese_part = self._escape_html(parts[1]) if len(parts) > 1 else ""  # 　　　　→ Chinese
+
+                # Render with proper HTML line breaks and styling
+                html_parts.append(f'''
+                    <div style="margin-bottom: 12px;">
+                        <p style="color: #FFD700; margin: 2px 0; font-size: 14px;">{english_part}</p>
+                        <p style="color: #FFFFFF; margin: 2px 0 2px 20px; font-size: 16px; font-weight: bold;">{chinese_part}</p>
+                    </div>
+                ''')
+            else:
+                # Single language format (Chinese only)
+                html_parts.append(f'<p style="color: white; margin: 8px 0; font-size: 16px;">{self._escape_html(line)}</p>')
 
         # 如果有增量文本，添加到末尾
         if self.current_partial_text:
