@@ -102,11 +102,11 @@ class AudioDeviceManager:
             # 记录被去重的设备（用于调试）
             if len(sorted_devices) > 1:
                 removed_apis = [d.get('host_api', 'Unknown') for d in sorted_devices[1:]]
-                Out.debug(
-                    f"设备 '{best_device['name']}' 去重: "
-                    f"保留 {best_device.get('host_api')}, "
-                    f"移除 {', '.join(removed_apis)}"
-                )
+                # Out.debug(
+                #     f"设备 '{best_device['name']}' 去重: "
+                #     f"保留 {best_device.get('host_api')}, "
+                #     f"移除 {', '.join(removed_apis)}"
+                # )
 
             deduplicated.append(best_device)
 

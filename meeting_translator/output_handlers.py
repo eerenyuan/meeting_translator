@@ -263,13 +263,8 @@ class LogFileHandler(BaseHandler):
 
         if provider:
             if mode:
-                if mode == "S2S":
-                    mode_text = "说"
-                elif mode == "S2T":
-                    mode_text = "听"
-                else:
-                    mode_text = mode
-                parts.append(f"[{provider} {mode_text}]")
+                
+                parts.append(f"[{provider} {mode}]")
             else:
                 parts.append(f"[{provider}]")
 

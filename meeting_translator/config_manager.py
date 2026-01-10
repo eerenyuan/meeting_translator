@@ -92,8 +92,8 @@ class ConfigManager:
                 Out.warning(f"配置缺少必需字段: {field}")
                 return False
 
-        # 检查 mode 字段值
-        valid_modes = ["LISTEN", "SPEAK", "BIDIRECTIONAL"]
+        # 检查 mode 字段值（使用枚举值而不是枚举名）
+        valid_modes = ["listen", "speak", "both"]
         if config.get("mode") not in valid_modes:
             Out.warning(f"配置中 mode 字段值无效: {config.get('mode')}")
             return False
@@ -158,7 +158,7 @@ class ConfigManager:
     def _get_default_config(self) -> Dict[str, Any]:
         """获取默认配置"""
         return {
-            "mode": "LISTEN",  # LISTEN / SPEAK / BIDIRECTIONAL
+            "mode": "listen",  # listen / speak / both（枚举值）
             "provider": "aliyun",  # aliyun / doubao / openai
             "voices": {  # 为每个 provider 单独保存音色
                 "aliyun": "cherry",
@@ -218,7 +218,7 @@ class ConfigManager:
 
     def get_mode(self) -> str:
         """获取翻译模式"""
-        return self.config.get("mode", "LISTEN")
+        return self.config.get("mode", "listen")
 
     def set_mode(self, mode: str):
         """设置翻译模式"""
@@ -375,7 +375,7 @@ if __name__ == "__main__":
     print("\n测试设置和获取:")
     print(f"当前模式: {config.get_mode()}")
 
-    config.set_mode("SPEAK")
+    config.set_mode("speak")
     config.set_listen_device_display("立体声混音 (Windows WASAPI)")
     config.set_speak_input_device_display("麦克风 (Windows WASAPI)")
     config.set_speak_output_device_display("Voicemeeter Input (VB-Audio Voicemeeter VAIO)")

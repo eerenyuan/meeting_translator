@@ -20,7 +20,7 @@ from PyQt5.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QComboBox, QLabel, QGroupBox
 )
-from PyQt5.QtCore import Qt, pyqtSignal, QObject
+from PyQt5.QtCore import Qt
 from dotenv import load_dotenv
 
 from audio_device_manager import AudioDeviceManager
@@ -37,29 +37,14 @@ from paths import LOGS_DIR, RECORDS_DIR, ensure_directories, get_initialization_
 # 配置日志（同时输出到控制台和文件）
 import sys
 ensure_directories()  # 确保所有目录存在
-log_file = os.path.join(LOGS_DIR, f"translator_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
-
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s [%(levelname)s] [%(name)s] %(message)s',
-    handlers=[
-        logging.StreamHandler(sys.stdout),  # 控制台输出
-        logging.FileHandler(log_file, encoding='utf-8')  # 文件输出
-    ]
-)
 
 # 注意：此时 OutputManager 还未初始化，使用 print 显示启动信息
-print(f"日志文件: {log_file}")
+
 print(f"配置目录: {os.path.join(os.path.expanduser('~'), 'Documents', 'meeting_translator', 'config')}")
 print(f"记录目录: {os.path.join(os.path.expanduser('~'), 'Documents', 'meeting_translator', 'records')}")
 
 # 加载环境变量
 load_dotenv()
-
-
-class TranslationSignals(QObject):
-    """翻译信号（用于线程间通信）"""
-    translation_received = pyqtSignal(str, str, bool)  # (source_text, target_text, is_final)
 
 
 class MeetingTranslatorApp(QWidget):
@@ -106,10 +91,6 @@ class MeetingTranslatorApp(QWidget):
         # 初始化 OutputManager
         self._init_output_manager()
 
-        # 信号
-        self.signals = TranslationSignals()
-        self.signals.translation_received.connect(self.on_translation_received)
-
         # 运行状态
         self.is_running = False
         self.is_loading_config = True  # 标志：正在加载配置，不要自动保存
@@ -138,6 +119,16 @@ class MeetingTranslatorApp(QWidget):
             print("="*60 + "\n")
 
     def _init_output_manager(self):
+        log_file = os.path.join(LOGS_DIR, f"translator_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
+
+        logging.basicConfig(
+            level=logging.INFO,
+            format='%(asctime)s [%(name)s] %(message)s',
+            handlers=[
+                logging.FileHandler(log_file, encoding='utf-8')  # 文件输出
+            ]
+        )
+
         """初始化 OutputManager 并添加 handlers"""
         manager = Out
 
@@ -148,6 +139,7 @@ class MeetingTranslatorApp(QWidget):
         console_handler = ConsoleHandler(
             enabled_types=[
                 MessageType.TRANSLATION,  # ✅ 显示最终翻译
+                MessageType.SUBTITLE,     # ✅ 显示字幕翻译
                 MessageType.ERROR,        # ✅ 显示错误
                 MessageType.WARNING,      # ✅ 显示警告
                 MessageType.USER_ALERT,   # ✅ 显示用户提示
@@ -163,6 +155,7 @@ class MeetingTranslatorApp(QWidget):
             enabled_types=[
                 MessageType.TRANSLATION,      # ✅ 翻译结果（完整记录）
                 # ❌ 不包含 PARTIAL_REPLACE/PARTIAL_APPEND - 增量翻译不记录
+                MessageType.SUBTITLE,          # ✅ 字幕翻译（完整记录）    
                 MessageType.STATUS,           # ✅ 状态信息
                 MessageType.ERROR,            # ✅ 错误
                 MessageType.WARNING,          # ✅ 警告
@@ -853,7 +846,6 @@ class MeetingTranslatorApp(QWidget):
         # 3. 启动翻译服务（英→中，仅字幕）
         self.listen_translation_service = MeetingTranslationServiceWrapper(
             api_key=None,  # 让工厂方法根据 provider 自动获取 API Key
-            on_translation=self.on_listen_translation,
             source_language="en",
             target_language="zh",
             audio_enabled=False,  # 仅字幕
@@ -927,7 +919,6 @@ class MeetingTranslatorApp(QWidget):
             Out.status("正在创建翻译服务...")
             self.speak_translation_service = MeetingTranslationServiceWrapper(
                 api_key=None,  # 让工厂方法根据 provider 自动获取 API Key
-                on_translation=self.on_speak_translation,
                 source_language="zh",
                 target_language="en",
                 audio_enabled=True,  # 启用音频
@@ -996,6 +987,8 @@ class MeetingTranslatorApp(QWidget):
         Out.status("停止翻译...")
 
         # 1. 保存字幕（如果有内容）
+        # todo: 需要保存的应该是完整的会议记录----包括s2s和s2t。因此也许不应该在subtitle_window.py中保存。
+        # 可以考虑直接做一个record_file_handler，利用OutputMgr框架。
         if save_subtitles and self.subtitle_window:
             try:
                 # 使用新的路径结构
@@ -1079,35 +1072,6 @@ class MeetingTranslatorApp(QWidget):
             else:
                 self.subtitle_window.show()
                 self.subtitle_btn.setText("🔳 隐藏字幕")
-
-    def on_listen_translation(self, source_text: str, target_text: str, is_final: bool = True):
-        """听模式翻译回调（在独立线程中调用）"""
-        # 发送信号到主线程
-        self.signals.translation_received.emit(source_text, target_text, is_final)
-
-    def on_speak_translation(self, source_text: str, target_text: str, is_final: bool = True):
-        """说模式翻译回调（在独立线程中调用）"""
-        # 说模式只需要音频输出，文本可选记录
-        if is_final:
-            Out.translation(f"[说模式翻译] {source_text} → {target_text}")
-
-    def on_translation_received(self, source_text: str, target_text: str, is_final: bool = True):
-        """
-        翻译接收（在主线程中调用）
-
-        Args:
-            source_text: 源语言文本
-            target_text: 目标语言文本
-            is_final: 是否为最终文本（True=已finalize，False=增量文本）
-        """
-        if is_final:
-            Out.translation(f"翻译: {source_text} -> {target_text}")
-        else:
-            Out.debug(f"增量翻译: {target_text}")
-
-        # 更新字幕窗口
-        if self.subtitle_window:
-            self.subtitle_window.update_subtitle(source_text, target_text, is_final=is_final)
 
     def closeEvent(self, event):
         """关闭事件"""

@@ -126,14 +126,14 @@ class SubtitleWindow(QWidget):
             # 重新渲染所有内容
             self._render_subtitles()
 
-            Out.debug(f"字幕已添加: {target_text}")
+            # Out.debug(f"字幕已添加: {target_text}")
         else:
             # 增量文本：临时显示在最后一行
             self.current_partial_text = target_text
             self.current_predicted_text = predicted_text or ""  # 保存预测文本
             self._render_subtitles()
 
-            Out.debug(f"增量字幕: {target_text}")
+            # Out.debug(f"增量字幕: {target_text}")
 
     def _render_subtitles(self):
         """渲染所有字幕（历史记录 + 当前增量）"""
@@ -227,7 +227,6 @@ class SubtitleWindow(QWidget):
                 for line in self.subtitle_history:
                     f.write(line + "\n\n")
 
-            Out.status(f"字幕已保存到: {filepath}")
             return filepath
         except Exception as e:
             Out.error(f"保存字幕失败: {e}")

@@ -6,7 +6,7 @@
 import asyncio
 import sys
 import os
-from typing import Callable, Optional
+from typing import Optional, Callable
 
 # 添加 poc 目录到路径
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'poc'))
@@ -22,7 +22,6 @@ class MeetingTranslationService:
     def __init__(
         self,
         api_key: str,
-        on_translation: Callable[[str, str, bool], None],
         source_language: str = "en",
         target_language: str = "zh",
         audio_enabled: bool = False,
@@ -35,7 +34,6 @@ class MeetingTranslationService:
 
         Args:
             api_key: API Key（或通过环境变量自动获取）
-            on_translation: 翻译回调 (source_text, target_text, is_final)
             source_language: 源语言（默认英文）
             target_language: 目标语言（默认中文）
             audio_enabled: 是否启用音频输出（说模式需要）
@@ -44,7 +42,6 @@ class MeetingTranslationService:
             provider: 翻译服务提供商（aliyun/openai/doubao，默认从环境变量读取）
         """
         self.api_key = api_key
-        self.on_translation = on_translation
         self.source_language = source_language
         self.target_language = target_language
         self.audio_enabled = audio_enabled
@@ -159,7 +156,7 @@ class MeetingTranslationService:
         while self.is_running:
             try:
                 # 运行消息处理
-                await self.client.handle_server_messages(self._on_text_received)
+                await self.client.handle_server_messages()
 
                 # 如果正常退出循环，检查是否需要重连
                 if self.is_running and not self.client.is_connected:
@@ -168,13 +165,7 @@ class MeetingTranslationService:
 
                     if reconnect_count > max_reconnect_attempts:
                         Out.error(f"重连失败次数过多 ({max_reconnect_attempts})，停止服务")
-                        # 通知用户
-                        if self.on_translation:
-                            self.on_translation(
-                                "",
-                                f"[错误] 连接断开，已尝试重连 {max_reconnect_attempts} 次失败",
-                                is_final=True
-                            )
+                        Out.user_alert(f"连接断开，已尝试重连 {max_reconnect_attempts} 次失败", "连接失败")
                         break
 
                     # 等待后重连
@@ -219,12 +210,7 @@ class MeetingTranslationService:
                         self._start_audio_forwarding()
 
                     # 通知用户重连成功
-                    if self.on_translation:
-                        self.on_translation(
-                            "",
-                            "[提示] 连接已恢复",
-                            is_final=True
-                        )
+                    Out.status("连接已恢复")
 
                 else:
                     # 正常退出
@@ -242,61 +228,10 @@ class MeetingTranslationService:
                 if self.is_running:
                     await asyncio.sleep(reconnect_delay)
 
-    def _on_text_received(self, text: str):
-        """
-        文本接收回调（内部使用）
-
-        Args:
-            text: 接收到的文本（格式: "[源] xxx" 或 "[译] xxx" 或 "[译增量] xxx"）
-        """
-        # 解析文本
-        if text.startswith("[源]"):
-            source_text = text[4:].strip()
-            # 暂存源文本（等待翻译）
-            self._current_source = source_text
-
-        elif text.startswith("[译增量]"):
-            # 增量文本（未finalize）
-            # 注意：每个 response.text.text 事件包含当前句子的完整状态（text + stash）
-            # 不是增量追加，而是完整替换
-            partial_text = text[6:].strip()
-
-            # 直接替换（不累积）
-            self._partial_translation = partial_text
-
-            # 获取源文本
-            source_text = getattr(self, '_current_source', '')
-
-            # 调用用户回调（标记为增量）
-            if self.on_translation:
-                try:
-                    self.on_translation(source_text, self._partial_translation, is_final=False)
-                except Exception as e:
-                    Out.error(f"翻译回调执行失败: {e}")
-
-        elif text.startswith("[译]"):
-            # 最终翻译文本
-            target_text = text[4:].strip()
-
-            # 清空累积的增量文本
-            self._partial_translation = ""
-
-            # 获取源文本
-            source_text = getattr(self, '_current_source', '')
-
-            # 调用用户回调（标记为最终）
-            if self.on_translation:
-                try:
-                    self.on_translation(source_text, target_text, is_final=True)
-                except Exception as e:
-                    Out.error(f"翻译回调执行失败: {e}")
-
     def _start_audio_forwarding(self):
         """启动音频转发线程（从 API 队列→外部回调）"""
         import threading
         import queue
-
-        audio_chunk_count = [0]  # 使用列表以便在闭包中修改
 
         def forward_loop():
             """音频转发循环（在独立线程中运行）"""
@@ -313,9 +248,6 @@ class MeetingTranslationService:
 
                     # 转发到外部回调（写入虚拟麦克风）
                     if self.on_audio_chunk:
-                        audio_chunk_count[0] += 1
-                        if audio_chunk_count[0] <= 3:  # 只记录前3个块
-                            Out.status(f"[音频转发] 转发音频块 #{audio_chunk_count[0]}, 大小: {len(audio_data)} 字节")
                         self.on_audio_chunk(audio_data)
 
                     # 标记任务完成
@@ -328,7 +260,7 @@ class MeetingTranslationService:
                     import traceback
                     traceback.print_exc()
 
-            Out.status(f"[音频转发] 转发循环已停止，共转发 {audio_chunk_count[0]} 个音频块")
+            Out.status("[音频转发] 转发循环已停止")
 
         self._audio_forward_thread = threading.Thread(target=forward_loop, daemon=True)
         self._audio_forward_thread.start()
@@ -344,7 +276,6 @@ class MeetingTranslationServiceWrapper:
     def __init__(
         self,
         api_key: str,
-        on_translation: Callable[[str, str, bool], None],
         source_language: str = "en",
         target_language: str = "zh",
         audio_enabled: bool = False,
@@ -353,7 +284,6 @@ class MeetingTranslationServiceWrapper:
         provider: Optional[str] = None
     ):
         self.api_key = api_key
-        self.on_translation = on_translation
         self.source_language = source_language
         self.target_language = target_language
         self.audio_enabled = audio_enabled
@@ -383,7 +313,6 @@ class MeetingTranslationServiceWrapper:
             # 创建翻译服务
             self.service = MeetingTranslationService(
                 api_key=self.api_key,
-                on_translation=self.on_translation,
                 source_language=self.source_language,
                 target_language=self.target_language,
                 audio_enabled=self.audio_enabled,
@@ -417,7 +346,7 @@ class MeetingTranslationServiceWrapper:
             try:
                 future = asyncio.run_coroutine_threadsafe(self.service.stop(), self.loop)
                 future.result(timeout=3)  # 等待 stop() 完成，最多等待 3 秒
-                Out.debug("翻译服务已停止")
+                # Out.debug("翻译服务已停止")
             except Exception as e:
                 Out.warning(f"停止翻译服务时出错: {e}")
 
@@ -428,7 +357,7 @@ class MeetingTranslationServiceWrapper:
                 pending = asyncio.all_tasks(self.loop)
                 for task in pending:
                     task.cancel()
-                Out.debug(f"已取消 {len(pending)} 个待处理任务")
+                # Out.debug(f"已取消 {len(pending)} 个待处理任务")
             except Exception as e:
                 Out.debug(f"取消任务时出错: {e}")
 
@@ -452,9 +381,10 @@ class MeetingTranslationServiceWrapper:
                 # 关闭事件循环
                 if not self.loop.is_closed():
                     self.loop.close()
-                    Out.debug("事件循环已关闭")
+                    # Out.debug("事件循环已关闭")
             except Exception as e:
-                Out.debug(f"关闭事件循环时出错: {e}")
+                pass
+                # Out.debug(f"关闭事件循环时出错: {e}")
             finally:
                 self.loop = None
 
@@ -479,6 +409,7 @@ class MeetingTranslationServiceWrapper:
 # 测试代码
 if __name__ == "__main__":
     import time
+    import logging
     from dotenv import load_dotenv
 
     load_dotenv()
@@ -494,15 +425,9 @@ if __name__ == "__main__":
         print("❌ 请设置 DASHSCOPE_API_KEY 或 ALIYUN_API_KEY 环境变量")
         exit(1)
 
-    # 翻译回调
-    def on_translation(source, target):
-        print(f"\n[源] {source}")
-        print(f"[译] {target}")
-
     # 创建翻译服务
     service = MeetingTranslationServiceWrapper(
-        api_key=api_key,
-        on_translation=on_translation
+        api_key=api_key
     )
 
     try:
