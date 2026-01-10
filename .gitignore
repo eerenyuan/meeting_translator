@@ -50,6 +50,10 @@ logs/
 *.mp3
 *.m4a
 
+# Exception: Voice sample files (for voice preview feature)
+!assets/*.wav
+!voice_samples/*.wav
+
 # Test outputs
 test_output/
 debug_output/
