@@ -143,6 +143,227 @@ cd meeting_translator && python main_app.py
 
 ---
 
+## 使用 UV（推荐用于 Git Worktrees）
+
+**UV** 是现代 Python 包管理器，提供自动环境管理和依赖安装，特别适合使用 git worktree 的多分支开发场景。
+
+### 为什么使用 UV？
+
+- ✅ **无需手动激活虚拟环境** - 自动管理 Python 环境
+- ✅ **Git Worktree 友好** - 多个工作树共享依赖缓存，无需重复安装
+- ✅ **一键运行** - `uv run main.py` 即可启动
+- ✅ **跨平台支持** - Windows、macOS、Linux 统一体验
+- ✅ **更快的依赖安装** - 并行安装，缓存友好
+
+### 安装 UV
+
+**macOS/Linux:**
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+**Windows (PowerShell):**
+```powershell
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+```
+
+**或使用 pip:**
+```bash
+pip install uv
+```
+
+### 使用 UV 运行程序
+
+#### 方法 1: 使用 uv run（推荐）
+
+```bash
+# 从仓库根目录直接运行
+uv run main.py
+```
+
+首次运行时，UV 会：
+1. 自动检测 Python 版本（根据 `.python-version`）
+2. 创建虚拟环境
+3. 安装所有依赖
+4. 启动应用程序
+
+后续运行会重用已安装的环境，秒启动！
+
+#### 方法 2: 使用启动脚本
+
+**macOS/Linux:**
+```bash
+./run.sh
+```
+
+**Windows:**
+```bash
+run.bat
+```
+
+启动脚本会自动检查：
+- ✓ `.env` 配置文件是否存在
+- ✓ `uv` 是否已安装
+- ✓ 提供友好的错误提示
+
+### Git Worktree 工作流
+
+使用 git worktree 可以在不同目录同时处理多个分支，非常适合并行开发和测试。
+
+#### 创建 Worktree
+
+```bash
+# 在主仓库中创建一个新的 worktree
+git worktree add ../meeting_translator-feature feature-branch
+
+# 切换到 worktree 目录
+cd ../meeting_translator-feature
+```
+
+#### 在 Worktree 中运行
+
+```bash
+# 1. 配置环境变量（首次）
+cp .env.example .env
+# 编辑 .env 填入你的 API Key
+
+# 2. 直接运行 - UV 会自动处理一切
+uv run main.py
+```
+
+**无需任何额外设置！** UV 会：
+- 自动使用正确的 Python 版本
+- 共享主仓库的依赖缓存（不会重复下载）
+- 为每个 worktree 创建独立的虚拟环境
+- 加载 worktree 中的 `.env` 配置
+
+#### Worktree 管理
+
+```bash
+# 查看所有 worktrees
+git worktree list
+
+# 删除 worktree
+git worktree remove ../meeting_translator-feature
+
+# 清理已删除的 worktree 记录
+git worktree prune
+```
+
+### 依赖管理
+
+#### 安装核心依赖
+
+```bash
+# UV 会根据 pyproject.toml 自动安装
+uv run main.py
+```
+
+#### 安装可选依赖（Doubao 提供商）
+
+```bash
+# 安装 Doubao 提供商所需的 protobuf
+uv sync --extra doubao
+
+# 或安装所有可选依赖
+uv sync --extra all
+```
+
+#### 更新依赖
+
+```bash
+# 更新锁定文件
+uv lock --upgrade
+
+# 同步到最新版本
+uv sync
+```
+
+### 迁移指南（从旧方法迁移到 UV）
+
+如果你之前使用的是传统的 `venv` + `pip` 方式，可以平滑迁移：
+
+**步骤 1: 安装 UV**
+```bash
+# macOS/Linux
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Windows
+powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
+```
+
+**步骤 2: 测试 UV**
+```bash
+# 测试新方法
+uv run main.py
+```
+
+**步骤 3: 验证旧方法仍然可用（向后兼容）**
+```bash
+# 旧方法依然可以使用
+source .venv/bin/activate  # Windows: .venv\Scripts\activate
+cd meeting_translator
+python main_app.py
+```
+
+**步骤 4: 可选 - 清理旧虚拟环境**
+```bash
+# 确认 UV 方法工作正常后，可以删除旧的 .venv
+rm -rf .venv  # Windows: rmdir /s .venv
+```
+
+### UV vs 传统方法对比
+
+| 特性 | 传统方法 (venv + pip) | UV 方法 |
+|-----|---------------------|---------|
+| **环境激活** | 需要手动 `source .venv/bin/activate` | ❌ 不需要，自动管理 |
+| **依赖安装** | 手动 `pip install -r requirements.txt` | ✅ 首次运行自动安装 |
+| **运行位置** | 必须 `cd meeting_translator/` | ✅ 可从仓库根目录运行 |
+| **Git Worktree** | 每个 worktree 需要独立安装 | ✅ 共享缓存，无需重复安装 |
+| **Python 版本** | 手动管理 | ✅ 自动匹配 `.python-version` |
+| **依赖更新** | 手动 `pip install --upgrade` | ✅ `uv lock --upgrade` |
+| **启动速度** | 正常 | ⚡ 更快（并行安装） |
+
+### 故障排除
+
+#### UV 未找到
+
+```bash
+# 确保 UV 在 PATH 中
+# macOS/Linux: 重新加载 shell 配置
+source ~/.bashrc  # 或 ~/.zshrc
+
+# Windows: 重启终端或添加到 PATH
+```
+
+#### Python 版本不匹配
+
+```bash
+# UV 会自动使用 .python-version 中指定的版本 (3.10)
+# 如果需要使用不同版本：
+UV_PYTHON=3.11 uv run main.py
+```
+
+#### 依赖安装失败
+
+```bash
+# 清除 UV 缓存
+uv cache clean
+
+# 重新安装
+uv sync --reinstall
+```
+
+#### .env 文件未找到
+
+```bash
+# UV 方法同样需要 .env 文件
+cp .env.example .env
+# 编辑 .env 填入 API Key
+```
+
+---
+
 ## 使用指南
 
 ### 基本使用
