@@ -623,14 +623,17 @@ class MeetingTranslatorApp(QWidget):
             display_name = device.get('display_name', device['name'])
             self.speak_input_combo.addItem(display_name, device)
 
-        # 3. 加载说模式输出设备（虚拟设备，用于 s2s 输出到虚拟麦克风）
-        # 使用 get_virtual_outputs() 只返回 Voicemeeter 设备
-        virtual_devices = self.device_manager.get_virtual_outputs()
+        # 3. 加载说模式输出设备（包含虚拟和真实输出，便于选择输出到耳机/音箱）
+        all_output_devices = self.device_manager.get_output_devices(include_voicemeeter=True, deduplicate=True)
         self.speak_output_combo.clear()
 
-        for device in virtual_devices:
+        for device in all_output_devices:
             # 使用 display_name（已包含 host api）
             display_name = device.get('display_name', device['name'])
+
+            # 标记虚拟/物理属性
+            if device.get('is_virtual'):
+                display_name += " [虚拟]"
 
             # 标记推荐的 API（WASAPI 或 MME，排除 DirectSound）
             host_api = device.get('host_api', '')
@@ -641,7 +644,7 @@ class MeetingTranslatorApp(QWidget):
 
             self.speak_output_combo.addItem(display_name, device)
 
-        # 自动选择最佳设备
+        # 自动选择最佳设备（优先虚拟，其次推荐 API，最后任何可用输出）
         self._auto_select_virtual_output(self.speak_output_combo)
 
     def _auto_select_loopback(self, combo: QComboBox):
@@ -663,40 +666,38 @@ class MeetingTranslatorApp(QWidget):
                 return
 
     def _auto_select_virtual_output(self, combo: QComboBox):
-        """自动选择虚拟输出设备（优先 WASAPI，其次 MME）"""
-        # 优先选择 WASAPI 设备
+        """自动选择输出设备（优先虚拟，其次推荐 API，最后任何设备）"""
+        # 1) 优先选择虚拟 + WASAPI
         for i in range(combo.count()):
             device = combo.itemData(i)
             host_api = device.get('host_api', '')
-            if 'WASAPI' in host_api and 'Voicemeeter Input' in device['name']:
+            if device.get('is_virtual') and 'WASAPI' in host_api:
                 combo.setCurrentIndex(i)
-                Out.status(f"自动选择 Voicemeeter Input (WASAPI): {device.get('display_name', device['name'])}")
+                Out.status(f"自动选择虚拟输出 (WASAPI): {device.get('display_name', device['name'])}")
                 return
 
-        # 次选：MME 设备
+        # 2) 次选虚拟 + MME
         for i in range(combo.count()):
             device = combo.itemData(i)
             host_api = device.get('host_api', '')
-            if 'MME' in host_api and 'Voicemeeter Input' in device['name']:
+            if device.get('is_virtual') and 'MME' in host_api:
                 combo.setCurrentIndex(i)
-                Out.status(f"自动选择 Voicemeeter Input (MME): {device.get('display_name', device['name'])}")
+                Out.status(f"自动选择虚拟输出 (MME): {device.get('display_name', device['name'])}")
                 return
 
-        # 再次次选：AUX Input (WASAPI)
+        # 3) 再次次选：任意虚拟设备
         for i in range(combo.count()):
             device = combo.itemData(i)
-            host_api = device.get('host_api', '')
-            if 'WASAPI' in host_api and 'AUX Input' in device['name']:
+            if device.get('is_virtual'):
                 combo.setCurrentIndex(i)
-                Out.status(f"自动选择 Voicemeeter AUX Input (WASAPI): {device.get('display_name', device['name'])}")
+                Out.status(f"自动选择虚拟输出: {device.get('display_name', device['name'])}")
                 return
 
-        # 最后备选：任何虚拟设备
-        for i in range(combo.count()):
-            device = combo.itemData(i)
-            combo.setCurrentIndex(i)
-            Out.status(f"自动选择虚拟设备: {device.get('display_name', device['name'])}")
-            return
+        # 4) 最后备选：任何设备（允许用户直接输出到耳机/音箱）
+        if combo.count() > 0:
+            combo.setCurrentIndex(0)
+            device = combo.itemData(0)
+            Out.status(f"自动选择输出设备: {device.get('display_name', device['name'])}")
 
     def load_config(self):
         """加载保存的配置"""
