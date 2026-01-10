@@ -239,8 +239,19 @@ class AudioDeviceManager:
                     # 添加显示名称（包含 host api）
                     display_name = f"{device_name} ({host_api_name})"
 
-                    # 判断是否为虚拟设备（Voicemeeter 系列）
-                    is_virtual = 'voicemeeter' in device_name.lower()
+                    # 判断是否为虚拟设备（Voicemeeter/VB-Cable/BlackHole 等）
+                    name_lower = device_name.lower()
+                    is_virtual = any([
+                        'voicemeeter' in name_lower,
+                        'vb-cable' in name_lower or 'vb cable' in name_lower,
+                        'vb-audio' in name_lower,
+                        'cable input' in name_lower,
+                        'cable output' in name_lower,
+                        'blackhole' in name_lower,
+                        'soundflower' in name_lower,
+                        'ground control' in name_lower,
+                        'loopback' in name_lower  # Rogue Amoeba Loopback
+                    ])
 
                     devices.append({
                         'index': i,
