@@ -139,7 +139,7 @@ class SubtitleWindow(QWidget):
             # 重新渲染所有内容
             self._render_subtitles()
 
-            Out.debug(f"字幕已添加: {source_text} → {target_text}")
+            # Out.debug(f"字幕已添加: {source_text} → {target_text}")
         else:
             # 增量文本：临时显示在最后一行
             self.current_partial_text = target_text
@@ -195,8 +195,8 @@ class SubtitleWindow(QWidget):
                 html_parts.append(f'''
                     {source_html}
                     <p style="color: #FFFFFF; margin: 2px 0 8px 0; font-weight: bold;
-                              text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.8);">
-                        　　　　→ {self._escape_html(self.current_partial_text)}<span style="color: #AAAAAA; font-weight: normal;">{self._escape_html(self.current_predicted_text)}</span> <span style="color: #6496FF;">...</span>
+                              font-size: 16px; text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.8);">
+                        　　　　→ {self._escape_html(self.current_partial_text)}<span style="color: #AAAAAA; font-weight: normal; font-size: 16px;">{self._escape_html(self.current_predicted_text)}</span> <span style="color: #6496FF;">...</span>
                     </p>
                 ''')
             else:
@@ -204,7 +204,7 @@ class SubtitleWindow(QWidget):
                 html_parts.append(f'''
                     {source_html}
                     <p style="color: #FFFFFF; margin: 2px 0 8px 0; font-weight: bold;
-                              text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.8);">
+                              font-size: 16px; text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.8);">
                         　　　　→ {self._escape_html(self.current_partial_text)} <span style="color: #6496FF;">...</span>
                     </p>
                 ''')
