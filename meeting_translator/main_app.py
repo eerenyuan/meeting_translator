@@ -5,7 +5,6 @@
 
 import sys
 import os
-import platform
 import logging
 from datetime import datetime
 
@@ -32,59 +31,58 @@ from translation_mode import TranslationMode, ModeConfig
 from subtitle_window import SubtitleWindow
 from config_manager import ConfigManager
 from output_manager import Out, MessageType
-from output_handlers import SubtitleHandler, ConsoleHandler, LogFileHandler, AlertHandler
-from PyQt5.QtCore import qInstallMessageHandler, QtMsgType
+from output_handlers import ConsoleHandler, LogFileHandler, AlertHandler, SubtitleHandler
 from paths import LOGS_DIR, RECORDS_DIR, ensure_directories, get_initialization_message
 
-# 配置日志（只输出到文件，不输出到控制台）
+# 配置日志（同时输出到控制台和文件）
 import sys
-ensure_directories()
-log_file = LOGS_DIR / f"translator_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
+ensure_directories()  # 确保所有目录存在
+log_file = os.path.join(LOGS_DIR, f"translator_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
 
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s [%(levelname)s] [%(name)s] %(message)s',
     handlers=[
-        # ❌ 移除 StreamHandler - logging 不再输出到控制台
-        # ✅ 只保留 FileHandler - 所有日志只写入文件
-        logging.FileHandler(log_file, encoding='utf-8')
+        logging.StreamHandler(sys.stdout),  # 控制台输出
+        logging.FileHandler(log_file, encoding='utf-8')  # 文件输出
     ]
 )
 
-# 降低asyncio警告级别（抑制WebSocket关闭时的警告）
-logging.getLogger('asyncio').setLevel(logging.CRITICAL)
+# 注意：此时 OutputManager 还未初始化，使用 print 显示启动信息
+print(f"日志文件: {log_file}")
+print(f"配置目录: {os.path.join(os.path.expanduser('~'), 'Documents', 'meeting_translator', 'config')}")
+print(f"记录目录: {os.path.join(os.path.expanduser('~'), 'Documents', 'meeting_translator', 'records')}")
 
 # 加载环境变量
 load_dotenv()
 
 
-def qt_message_handler(msg_type, context, message):
-    """
-    Qt 消息处理器（捕获 Qt 警告并过滤）
-    """
-    # 过滤掉跨屏幕几何警告（Qt 在 Windows 上的已知问题）
-    if "setGeometry" in message and "Unable to set geometry" in message:
-        return  # 忽略这类警告
-
-
 class TranslationSignals(QObject):
     """翻译信号（用于线程间通信）"""
     translation_received = pyqtSignal(str, str, bool)  # (source_text, target_text, is_final)
-    error_occurred = pyqtSignal(str, object)  # (error_message, exception)
 
 
 class MeetingTranslatorApp(QWidget):
     """会议翻译主应用"""
 
+    # Provider 输出采样率映射（S2S 模式）
+    PROVIDER_OUTPUT_RATES = {
+        "aliyun": 24000,   # Qwen: 24kHz
+        "openai": 24000,   # OpenAI Realtime: 24kHz
+        "doubao": 16000,   # Doubao: 16kHz
+    }
+
     def __init__(self):
         super().__init__()
 
-        # 获取翻译服务提供商（将从 UI 选择器获取，默认 aliyun）
-        self.provider = "aliyun"  # 初始默认值
+        # 获取 API Key
+        self.api_key = os.getenv("DASHSCOPE_API_KEY") or os.getenv("ALIYUN_API_KEY")
+        if not self.api_key:
+            Out.error("未设置 DASHSCOPE_API_KEY 或 ALIYUN_API_KEY 环境变量")
+            sys.exit(1)
 
-        # API Key 将由 TranslationClientFactory 根据 provider 自动加载
-        # 这样可以确保每个提供商使用正确的 API Key
-        self.api_key = None
+        # API 提供商
+        self.provider = "aliyun"  # 默认阿里云
 
         # 翻译模式
         self.current_mode = TranslationMode.LISTEN
@@ -111,7 +109,6 @@ class MeetingTranslatorApp(QWidget):
         # 信号
         self.signals = TranslationSignals()
         self.signals.translation_received.connect(self.on_translation_received)
-        self.signals.error_occurred.connect(self.on_service_error)
 
         # 运行状态
         self.is_running = False
@@ -132,9 +129,20 @@ class MeetingTranslatorApp(QWidget):
         # 配置加载完成，允许自动保存
         self.is_loading_config = False
 
+        # 检查并提示迁移旧文件（如果有）
+        init_message = get_initialization_message()
+        if init_message:
+            # 显示迁移信息
+            print("\n" + "="*60)
+            print(init_message)
+            print("="*60 + "\n")
+
     def _init_output_manager(self):
         """初始化 OutputManager 并添加 handlers"""
         manager = Out
+
+        # 清空临时 handlers（移除 __init__ 中添加的临时 ConsoleHandler）
+        manager.handlers.clear()
 
         # 1. 添加控制台处理器（只显示翻译结果和错误，隐藏状态信息）
         console_handler = ConsoleHandler(
@@ -142,7 +150,7 @@ class MeetingTranslatorApp(QWidget):
                 MessageType.TRANSLATION,  # ✅ 显示最终翻译
                 MessageType.ERROR,        # ✅ 显示错误
                 MessageType.WARNING,      # ✅ 显示警告
-                MessageType.USER_ALERT    # ✅ 显示用户提示
+                MessageType.USER_ALERT,   # ✅ 显示用户提示
                 # ❌ 不包含 STATUS - 状态信息不显示在控制台
                 # ❌ 不包含 DEBUG - Token 用量不显示
             ]
@@ -172,7 +180,7 @@ class MeetingTranslatorApp(QWidget):
         manager.add_handler(alert_handler)
 
         # 注意：SubtitleHandler 会在字幕窗口创建后添加
-        # （见 start_listen_translation 方法）
+        # （见 _start_listen_mode 方法）
 
     def _update_subtitle_handler(self):
         """更新或创建 SubtitleHandler"""
@@ -188,56 +196,16 @@ class MeetingTranslatorApp(QWidget):
             if not has_subtitle_handler:
                 # 创建 SubtitleHandler，self 作为 parent（确保正确的线程亲和性）
                 subtitle_handler = SubtitleHandler(self.subtitle_window)
-                subtitle_handler.moveToThread(self.thread())  # 确保在主线程
                 manager.add_handler(subtitle_handler)
-
-    @staticmethod
-    def get_virtual_audio_device_name():
-        """获取当前平台的虚拟音频设备名称"""
-        system = platform.system()
-        if system == "Darwin":  # macOS
-            return "BlackHole"
-        elif system == "Windows":
-            return "Voicemeeter"
-        else:  # Linux or others
-            return "虚拟音频设备"
-
-    @staticmethod
-    def get_virtual_audio_device_pattern():
-        """获取当前平台用于设备匹配的模式列表"""
-        system = platform.system()
-        if system == "Darwin":  # macOS
-            return ["BlackHole"]
-        elif system == "Windows":
-            return ["Voicemeeter Input", "VoiceMeeter Input"]
-        else:  # Linux or others
-            return []
 
     def load_stylesheet(self):
         """加载 QSS 样式表"""
-        import platform
         style_path = os.path.join(os.path.dirname(__file__), "styles", "modern_style.qss")
         try:
             with open(style_path, 'r', encoding='utf-8') as f:
                 stylesheet = f.read()
-
-                # 根据操作系统设置字体
-                system = platform.system()
-                if system == "Darwin":  # macOS
-                    # Use Helvetica Neue which handles Chinese and emoji better with bold
-                    font_family = '"Helvetica Neue", "PingFang SC", "Apple Color Emoji", sans-serif'
-                elif system == "Windows":
-                    font_family = '"Microsoft YaHei UI", "Segoe UI Emoji", "Segoe UI", sans-serif'
-                else:  # Linux or others
-                    font_family = '"Segoe UI", "Noto Color Emoji", sans-serif'
-
-                # 替换样式表中的字体定义
-                stylesheet = stylesheet.replace(
-                    '"PingFang SC", "Microsoft YaHei UI", "Segoe UI", "Apple Color Emoji", sans-serif',
-                    font_family
-                )
-
                 self.setStyleSheet(stylesheet)
+                Out.status("已加载现代化样式表")
         except Exception as e:
             Out.warning(f"无法加载样式表: {e}，使用默认样式")
 
@@ -268,22 +236,21 @@ class MeetingTranslatorApp(QWidget):
         mode_group.setLayout(mode_layout)
         layout.addWidget(mode_group)
 
-        # 1.5. API提供商选择组
+        # 1.5 API 提供商选择组
         provider_group = QGroupBox("🌐 API 提供商")
         provider_layout = QHBoxLayout()
-
-        provider_label = QLabel("选择翻译服务:")
-        provider_label.setObjectName("subtitleLabel")
-        provider_layout.addWidget(provider_label)
 
         self.provider_combo = QComboBox()
         self.provider_combo.addItem("阿里云 Qwen (Alibaba Cloud)", "aliyun")
         self.provider_combo.addItem("豆包 Doubao (ByteDance)", "doubao")
         self.provider_combo.addItem("OpenAI Realtime", "openai")
         self.provider_combo.currentIndexChanged.connect(self.on_provider_changed)
+
+        provider_label = QLabel("选择提供商:")
+        provider_label.setObjectName("subtitleLabel")
+        provider_layout.addWidget(provider_label)
         provider_layout.addWidget(self.provider_combo, 1)
 
-        # 显示当前选择
         self.provider_info = QLabel("当前: 阿里云 Qwen")
         self.provider_info.setObjectName("deviceInfoLabel")
         provider_layout.addWidget(self.provider_info)
@@ -295,15 +262,6 @@ class MeetingTranslatorApp(QWidget):
         device_group = QGroupBox("🎧 音频设备")
         device_layout = QVBoxLayout()
         device_layout.setSpacing(16)
-
-        # 添加刷新设备列表按钮
-        refresh_device_layout = QHBoxLayout()
-        refresh_device_layout.setContentsMargins(0, 0, 10, 10)
-        self.refresh_devices_btn = QPushButton("🔄 刷新设备列表")
-        self.refresh_devices_btn.clicked.connect(self.on_refresh_devices)
-        refresh_device_layout.addWidget(self.refresh_devices_btn)
-        refresh_device_layout.addStretch()
-        device_layout.addLayout(refresh_device_layout)
 
         # 2.1 听模式设备（会议音频输入）
         self.listen_device_widget = QWidget()
@@ -335,8 +293,7 @@ class MeetingTranslatorApp(QWidget):
         speak_layout.addWidget(self.speak_input_combo)
 
         # 英文虚拟麦克风输出
-        device_name = self.get_virtual_audio_device_name()
-        speak_output_label = QLabel(f"🔊 英文虚拟麦克风输出（{device_name}）:")
+        speak_output_label = QLabel("🔊 英文虚拟麦克风输出（VB-Cable）:")
         speak_output_label.setObjectName("subtitleLabel")
         speak_layout.addWidget(speak_output_label)
         self.speak_output_combo = QComboBox()
@@ -348,7 +305,7 @@ class MeetingTranslatorApp(QWidget):
         voice_label.setObjectName("subtitleLabel")
         speak_layout.addWidget(voice_label)
         self.voice_combo = QComboBox()
-        self._load_provider_voices()  # 动态加载提供商支持的声音
+        # 注意：音色选项会在 _load_provider_voices() 中动态加载
         self.voice_combo.currentIndexChanged.connect(self.on_voice_changed)
         speak_layout.addWidget(self.voice_combo)
 
@@ -360,6 +317,12 @@ class MeetingTranslatorApp(QWidget):
         self.speak_device_widget.setLayout(speak_layout)
         self.speak_device_widget.hide()  # 默认隐藏
         device_layout.addWidget(self.speak_device_widget)
+
+        # 刷新设备按钮
+        self.refresh_devices_btn = QPushButton("🔄 刷新设备列表")
+        self.refresh_devices_btn.setObjectName("secondaryButton")
+        self.refresh_devices_btn.clicked.connect(self.on_refresh_devices)
+        device_layout.addWidget(self.refresh_devices_btn)
 
         device_group.setLayout(device_layout)
         layout.addWidget(device_group)
@@ -397,14 +360,13 @@ class MeetingTranslatorApp(QWidget):
         layout.addWidget(status_group)
 
         # 帮助信息
-        device_name = self.get_virtual_audio_device_name()
-        help_label = QLabel(f"""
+        help_label = QLabel("""
         <b>📖 使用说明:</b><br>
         <b>👂 听模式</b>: 捕获会议音频（英文）→显示中文字幕（适合听英文会议）<br>
         <b>🎤 说模式</b>: 捕获中文麦克风→输出英文到虚拟麦克风（适合说中文参会）<br>
         <b>🔄 双向模式</b>: 同时运行听+说（完整双向同传）<br>
         <br>
-        <b>💡 提示:</b> 说模式需要安装 {device_name} 虚拟音频设备
+        <b>💡 提示:</b> 说模式需要安装 VB-Audio Cable 虚拟音频设备
         """)
         help_label.setWordWrap(True)
         help_label.setObjectName("infoLabel")
@@ -445,6 +407,8 @@ class MeetingTranslatorApp(QWidget):
             self.listen_device_widget.show()
             self.speak_device_widget.show()
 
+        Out.status(f"切换到模式: {self.current_mode.value}")
+
     def on_listen_device_selected(self, index):
         """听模式设备选择事件"""
         device = self.listen_device_combo.itemData(index)
@@ -461,7 +425,7 @@ class MeetingTranslatorApp(QWidget):
 
             # 保存设备配置（仅在非加载期间）
             if not self.is_loading_config:
-                self.config_manager.set_listen_device_name(device['name'])
+                self.config_manager.set_listen_device_display(device['display_name'])
 
     def on_speak_device_selected(self, index):
         """说模式设备选择事件"""
@@ -481,20 +445,69 @@ class MeetingTranslatorApp(QWidget):
         # 保存设备配置（仅在非加载期间）
         if not self.is_loading_config:
             if input_device:
-                self.config_manager.set_speak_input_device_name(input_device['name'])
+                self.config_manager.set_speak_input_device_display(input_device['display_name'])
             if output_device:
-                self.config_manager.set_speak_output_device_name(output_device['name'])
+                self.config_manager.set_speak_output_device_display(output_device['display_name'])
 
     def on_voice_changed(self, index):
         """语音音色选择事件"""
         voice = self.voice_combo.itemData(index)
-        if voice:
-            # 保存语音配置（仅在非加载期间）
+        if voice is not None:  # 允许空字符串（豆包不支持音色）
+            # 保存语音配置（仅在非加载期间），传递当前 provider
             if not self.is_loading_config:
-                self.config_manager.set_voice(voice)
+                self.config_manager.set_voice(voice, provider=self.provider)
+                Out.status(f"已保存音色设置: {self.provider} -> {voice or '(默认)'}")
+
+    def _load_provider_voices(self):
+        """
+        加载当前 provider 支持的音色列表
+        并恢复该 provider 的音色配置
+        """
+        # 临时设置加载标志，防止触发 on_voice_changed 时保存默认值
+        was_loading = self.is_loading_config
+        self.is_loading_config = True
+
+        try:
+            from translation_client_factory import TranslationClientFactory
+
+            self.voice_combo.clear()
+
+            # 获取该 provider 支持的音色
+            voices = TranslationClientFactory.get_supported_voices(self.provider)
+
+            if not voices:
+                # 如果 provider 不支持音色（如豆包），显示提示
+                self.voice_combo.addItem("该提供商不支持音色选择", "")
+                self.voice_combo.setEnabled(False)
+                Out.status(f"{self.provider} 不支持音色选择")
+                return
+
+            # 启用音色选择
+            self.voice_combo.setEnabled(True)
+
+            # 添加所有支持的音色
+            for voice_id, voice_name in voices.items():
+                self.voice_combo.addItem(voice_name, voice_id)
+
+            # 恢复该 provider 的音色配置
+            saved_voice = self.config_manager.get_voice(provider=self.provider)
+            if saved_voice:
+                # 在新列表中查找并恢复
+                for i in range(self.voice_combo.count()):
+                    if self.voice_combo.itemData(i) == saved_voice:
+                        self.voice_combo.setCurrentIndex(i)
+                        Out.status(f"恢复音色设置: {self.provider} -> {saved_voice}")
+                        break
+            else:
+                # 如果没有保存的配置，选择第一个
+                if self.voice_combo.count() > 0:
+                    self.voice_combo.setCurrentIndex(0)
+        finally:
+            # 恢复原来的加载状态
+            self.is_loading_config = was_loading
 
     def on_provider_changed(self, index):
-        """API提供商切换事件"""
+        """API 提供商选择事件"""
         new_provider = self.provider_combo.itemData(index)
         if new_provider and new_provider != self.provider:
             old_provider = self.provider
@@ -515,118 +528,128 @@ class MeetingTranslatorApp(QWidget):
                     for i in range(self.provider_combo.count()):
                         if self.provider_combo.itemData(i) == old_provider:
                             self.provider_combo.setCurrentIndex(i)
-                            break
-                    return  # 不继续处理
+                            Out.warning(f"依赖缺失，已回滚到原提供商: {old_provider}")
+                            return
 
+            # 更新提供商
             self.provider = new_provider
-
-            # 更新显示
             provider_name = self.provider_combo.currentText()
             self.provider_info.setText(f"当前: {provider_name}")
 
             # 重新加载该提供商支持的语音音色
             self._load_provider_voices()
 
-            # 保存配置（仅在非加载期间）
+            # 保存提供商配置（仅在非加载期间）
             if not self.is_loading_config:
                 self.config_manager.set_provider(self.provider)
+                Out.status(f"已切换 API 提供商: {provider_name} ({new_provider})")
 
     def on_refresh_devices(self):
         """刷新设备列表"""
+        Out.status("正在刷新设备列表...")
+
+        # 保存当前选中的设备
+        current_listen_device = self.listen_device_combo.currentData()
+        current_speak_input_device = self.speak_input_combo.currentData()
+        current_speak_output_device = self.speak_output_combo.currentData()
+
+        # 重新扫描设备
         try:
-            # 保存当前选择的设备
-            current_listen_device = self.listen_device_combo.currentData()
-            current_speak_input_device = self.speak_input_combo.currentData()
-            current_speak_output_device = self.speak_output_combo.currentData()
-
-            # 关键：先刷新 PyAudio 实例，重新扫描设备
             self.device_manager.refresh()
-
-            # 重新加载设备列表
-            self.load_devices()
-
-            # 尝试恢复之前选择的设备
-            restored_count = 0
-
-            # 恢复听模式设备
-            if current_listen_device:
-                for i in range(self.listen_device_combo.count()):
-                    device = self.listen_device_combo.itemData(i)
-                    if device and device['index'] == current_listen_device.get('index'):
-                        self.listen_device_combo.setCurrentIndex(i)
-                        restored_count += 1
-                        break
-
-            # 恢复说模式输入设备
-            if current_speak_input_device:
-                for i in range(self.speak_input_combo.count()):
-                    device = self.speak_input_combo.itemData(i)
-                    if device and device['index'] == current_speak_input_device.get('index'):
-                        self.speak_input_combo.setCurrentIndex(i)
-                        restored_count += 1
-                        break
-
-            # 恢复说模式输出设备
-            if current_speak_output_device:
-                for i in range(self.speak_output_combo.count()):
-                    device = self.speak_output_combo.itemData(i)
-                    if device and device['index'] == current_speak_output_device.get('index'):
-                        self.speak_output_combo.setCurrentIndex(i)
-                        restored_count += 1
-                        break
-
-            # 显示刷新结果
-            total_devices = (self.listen_device_combo.count() +
-                            self.speak_input_combo.count() +
-                            self.speak_output_combo.count())
-
-            if restored_count > 0:
-                Out.status(f"✅ 设备列表已刷新（共 {total_devices} 个设备，恢复了 {restored_count} 个选择）")
-            else:
-                Out.status(f"✅ 设备列表已刷新（共 {total_devices} 个设备）")
-
+            Out.status("设备扫描完成")
         except Exception as e:
-            Out.error(f"刷新设备列表失败: {e}", exc_info=True)
+            Out.error(f"刷新设备失败: {e}")
+            return
+
+        # 重新加载设备列表
+        self.load_devices()
+
+        # 尝试恢复之前选中的设备（通过 display_name 匹配）
+        restored = False
+        if current_listen_device:
+            for i in range(self.listen_device_combo.count()):
+                device = self.listen_device_combo.itemData(i)
+                if device and device['display_name'] == current_listen_device['display_name']:
+                    self.listen_device_combo.setCurrentIndex(i)
+                    Out.status(f"✓ 恢复听模式设备: {current_listen_device['display_name']}")
+                    restored = True
+                    break
+            if not restored:
+                Out.warning(f"⚠ 未找到之前的听模式设备: {current_listen_device['display_name']}")
+
+        restored = False
+        if current_speak_input_device:
+            for i in range(self.speak_input_combo.count()):
+                device = self.speak_input_combo.itemData(i)
+                if device and device['display_name'] == current_speak_input_device['display_name']:
+                    self.speak_input_combo.setCurrentIndex(i)
+                    Out.status(f"✓ 恢复说模式输入设备: {current_speak_input_device['display_name']}")
+                    restored = True
+                    break
+            if not restored:
+                Out.warning(f"⚠ 未找到之前的说模式输入设备: {current_speak_input_device['display_name']}")
+
+        restored = False
+        if current_speak_output_device:
+            for i in range(self.speak_output_combo.count()):
+                device = self.speak_output_combo.itemData(i)
+                if device and device['display_name'] == current_speak_output_device['display_name']:
+                    self.speak_output_combo.setCurrentIndex(i)
+                    Out.status(f"✓ 恢复说模式输出设备: {current_speak_output_device['display_name']}")
+                    restored = True
+                    break
+            if not restored:
+                Out.warning(f"⚠ 未找到之前的说模式输出设备: {current_speak_output_device['display_name']}")
+
+        Out.status("设备列表刷新完成")
 
     def load_devices(self):
         """加载音频设备列表"""
-        # 1. 加载听模式设备（输入设备，优先 WASAPI Loopback）
-        input_devices = self.device_manager.get_input_devices()
+        # 1. 加载听模式设备（真实 loopback/speaker，用于 s2t 采集）
+        # 使用 get_real_speakers() 只返回 loopback 设备
+        speaker_devices = self.device_manager.get_real_speakers()
         self.listen_device_combo.clear()
 
-        for device in input_devices:
-            display_name = device['name']
+        for device in speaker_devices:
+            # 使用 display_name（已包含 host api）
+            display_name = device.get('display_name', device['name'])
             if device.get('is_wasapi_loopback'):
-                display_name += " [推荐-WASAPI]"
-            elif device.get('is_loopback'):
                 display_name += " [推荐]"
             self.listen_device_combo.addItem(display_name, device)
 
         # 自动选择推荐设备
         self._auto_select_loopback(self.listen_device_combo)
 
-        # 2. 加载说模式输入设备（真实麦克风，排除 loopback）
+        # 2. 加载说模式输入设备（真实麦克风，用于 s2s 采集）
+        # 使用 get_real_microphones() 只返回真实 mic
+        mic_devices = self.device_manager.get_real_microphones()
         self.speak_input_combo.clear()
-        for device in input_devices:
-            if not device.get('is_loopback') and not device.get('is_wasapi_loopback'):
-                self.speak_input_combo.addItem(device['name'], device)
 
-        # 3. 加载说模式输出设备（虚拟麦克风，如 Voicemeeter Input 或 BlackHole）
-        output_devices = self.device_manager.get_output_devices()
+        for device in mic_devices:
+            # 使用 display_name（已包含 host api）
+            display_name = device.get('display_name', device['name'])
+            self.speak_input_combo.addItem(display_name, device)
+
+        # 3. 加载说模式输出设备（虚拟设备，用于 s2s 输出到虚拟麦克风）
+        # 使用 get_virtual_outputs() 只返回 Voicemeeter 设备
+        virtual_devices = self.device_manager.get_virtual_outputs()
         self.speak_output_combo.clear()
-        device_patterns = self.get_virtual_audio_device_pattern()
 
-        for device in output_devices:
-            display_name = device['name']
-            # 优先推荐索引 14（测试验证可用 - Windows only）
-            if device['index'] == 14 and platform.system() == "Windows":
-                display_name += " [推荐-已验证]"
-            elif any(pattern in device['name'] for pattern in device_patterns):
+        for device in virtual_devices:
+            # 使用 display_name（已包含 host api）
+            display_name = device.get('display_name', device['name'])
+
+            # 标记推荐的 API（WASAPI 或 MME，排除 DirectSound）
+            host_api = device.get('host_api', '')
+            if 'WASAPI' in host_api:
                 display_name += " [推荐]"
+            elif 'MME' in host_api:
+                display_name += " [可用]"
+
             self.speak_output_combo.addItem(display_name, device)
 
-        # 自动选择虚拟音频设备
-        self._auto_select_virtual_device(self.speak_output_combo)
+        # 自动选择最佳设备
+        self._auto_select_virtual_output(self.speak_output_combo)
 
     def _auto_select_loopback(self, combo: QComboBox):
         """自动选择 Loopback 设备"""
@@ -635,6 +658,7 @@ class MeetingTranslatorApp(QWidget):
             device = combo.itemData(i)
             if device.get('is_wasapi_loopback'):
                 combo.setCurrentIndex(i)
+                Out.status(f"自动选择 WASAPI Loopback: {device['name']}")
                 return
 
         # 次选传统 loopback
@@ -642,102 +666,112 @@ class MeetingTranslatorApp(QWidget):
             device = combo.itemData(i)
             if device.get('is_loopback'):
                 combo.setCurrentIndex(i)
+                Out.status(f"自动选择 Loopback: {device['name']}")
                 return
 
-    def _auto_select_virtual_device(self, combo: QComboBox):
-        """自动选择虚拟音频设备（Voicemeeter/BlackHole等）"""
-        device_patterns = self.get_virtual_audio_device_pattern()
-
-        # Windows: 优先选择索引 14（测试结果显示能正常工作）
-        if platform.system() == "Windows":
-            for i in range(combo.count()):
-                device = combo.itemData(i)
-                if device['index'] == 14:
-                    combo.setCurrentIndex(i)
-                    return
-
-        # 备选：任何匹配的虚拟音频设备
+    def _auto_select_virtual_output(self, combo: QComboBox):
+        """自动选择虚拟输出设备（优先 WASAPI，其次 MME）"""
+        # 优先选择 WASAPI 设备
         for i in range(combo.count()):
             device = combo.itemData(i)
-            if any(pattern in device['name'] for pattern in device_patterns):
+            host_api = device.get('host_api', '')
+            if 'WASAPI' in host_api and 'Voicemeeter Input' in device['name']:
                 combo.setCurrentIndex(i)
+                Out.status(f"自动选择 Voicemeeter Input (WASAPI): {device.get('display_name', device['name'])}")
                 return
 
-    def _load_provider_voices(self):
-        """加载当前提供商支持的声音"""
-        from translation_client_factory import TranslationClientFactory
+        # 次选：MME 设备
+        for i in range(combo.count()):
+            device = combo.itemData(i)
+            host_api = device.get('host_api', '')
+            if 'MME' in host_api and 'Voicemeeter Input' in device['name']:
+                combo.setCurrentIndex(i)
+                Out.status(f"自动选择 Voicemeeter Input (MME): {device.get('display_name', device['name'])}")
+                return
 
-        self.voice_combo.clear()
-        voices = TranslationClientFactory.get_supported_voices(self.provider)
+        # 再次次选：AUX Input (WASAPI)
+        for i in range(combo.count()):
+            device = combo.itemData(i)
+            host_api = device.get('host_api', '')
+            if 'WASAPI' in host_api and 'AUX Input' in device['name']:
+                combo.setCurrentIndex(i)
+                Out.status(f"自动选择 Voicemeeter AUX Input (WASAPI): {device.get('display_name', device['name'])}")
+                return
 
-        if not voices:
-            # 如果提供商没有定义声音，使用默认值
-            Out.warning(f"提供商 {self.provider} 没有定义声音，使用默认值")
-            self.voice_combo.addItem("默认声音", "")
+        # 最后备选：任何虚拟设备
+        for i in range(combo.count()):
+            device = combo.itemData(i)
+            combo.setCurrentIndex(i)
+            Out.status(f"自动选择虚拟设备: {device.get('display_name', device['name'])}")
             return
-
-        # 添加所有支持的声音
-        for voice_id, voice_name in voices.items():
-            self.voice_combo.addItem(voice_name, voice_id)
-
-        # 尝试从环境变量或配置文件恢复上次选择的声音
-        saved_voice = self.config_manager.get_voice()
-        if saved_voice:
-            for i in range(self.voice_combo.count()):
-                if self.voice_combo.itemData(i) == saved_voice:
-                    self.voice_combo.setCurrentIndex(i)
-                    break
-
 
     def load_config(self):
         """加载保存的配置"""
-        # 1. 恢复 API 提供商
-        saved_provider = self.config_manager.get_provider()
-        for i in range(self.provider_combo.count()):
-            provider = self.provider_combo.itemData(i)
-            if provider == saved_provider:
-                self.provider_combo.setCurrentIndex(i)
-                break
+        Out.status("=" * 60)
+        Out.status("开始加载上次保存的配置...")
 
-        # 2. 恢复翻译模式
+        # 显示所有配置项（用于调试）
+        Out.status(f"  模式: {self.config_manager.get_mode()}")
+        Out.status(f"  提供商: {self.config_manager.get_provider()}")
+        Out.status(f"  听模式设备: {self.config_manager.get_listen_device_display() or '未设置'}")
+        Out.status(f"  说模式输入: {self.config_manager.get_speak_input_device_display() or '未设置'}")
+        Out.status(f"  说模式输出: {self.config_manager.get_speak_output_device_display() or '未设置'}")
+        Out.status(f"  语音音色: {self.config_manager.get_voice()}")
+
+        # 1. 恢复翻译模式
         saved_mode = self.config_manager.get_mode()
         for i in range(self.mode_combo.count()):
             mode = self.mode_combo.itemData(i)
             if mode.value == saved_mode:
                 self.mode_combo.setCurrentIndex(i)
+                Out.status(f"✓ 恢复模式: {saved_mode}")
                 break
 
-        # 2. 恢复听模式设备（通过名字匹配）
+        # 2. 恢复 API 提供商
+        saved_provider = self.config_manager.get_provider()
+        for i in range(self.provider_combo.count()):
+            provider = self.provider_combo.itemData(i)
+            if provider == saved_provider:
+                self.provider_combo.setCurrentIndex(i)
+                self.provider = saved_provider
+                provider_name = self.provider_combo.currentText()
+                self.provider_info.setText(f"当前: {provider_name}")
+                Out.status(f"✓ 恢复 API 提供商: {saved_provider}")
+                break
+
+        # 2.5 加载该 provider 的音色列表并恢复音色设置
+        self._load_provider_voices()
+
+        # 3. 恢复听模式设备（通过 display_name 匹配）
         # 不管当前模式，都恢复所有模式的配置
-        listen_device_name = self.config_manager.get_listen_device_name()
-        if listen_device_name:
-            self._select_device_by_name(self.listen_device_combo, listen_device_name, "听模式设备")
+        listen_device_display = self.config_manager.get_listen_device_display()
+        if listen_device_display:
+            self._select_device_by_display(self.listen_device_combo, listen_device_display, "听模式设备")
 
-        # 3. 恢复说模式输入设备
-        speak_input_name = self.config_manager.get_speak_input_device_name()
-        if speak_input_name:
-            self._select_device_by_name(self.speak_input_combo, speak_input_name, "说模式输入设备")
+        # 4. 恢复说模式输入设备
+        speak_input_display = self.config_manager.get_speak_input_device_display()
+        if speak_input_display:
+            self._select_device_by_display(self.speak_input_combo, speak_input_display, "说模式输入设备")
 
-        # 4. 恢复说模式输出设备
-        speak_output_name = self.config_manager.get_speak_output_device_name()
-        if speak_output_name:
-            self._select_device_by_name(self.speak_output_combo, speak_output_name, "说模式输出设备")
+        # 5. 恢复说模式输出设备
+        speak_output_display = self.config_manager.get_speak_output_device_display()
+        if speak_output_display:
+            self._select_device_by_display(self.speak_output_combo, speak_output_display, "说模式输出设备")
 
-        # 5. 恢复语音音色
-        saved_voice = self.config_manager.get_voice()
-        for i in range(self.voice_combo.count()):
-            if self.voice_combo.itemData(i) == saved_voice:
-                self.voice_combo.setCurrentIndex(i)
-                break
+        # 注意：语音音色已在 _load_provider_voices() 中恢复
 
-    def _select_device_by_name(self, combo: QComboBox, device_name: str, device_type: str):
-        """通过设备名字选择设备"""
+        Out.status("配置加载完成")
+        Out.status("=" * 60)
+
+    def _select_device_by_display(self, combo: QComboBox, device_display: str, device_type: str):
+        """通过设备显示名称（包含 host api）选择设备"""
         for i in range(combo.count()):
             device = combo.itemData(i)
-            if device and device['name'] == device_name:
+            if device and device['display_name'] == device_display:
                 combo.setCurrentIndex(i)
+                Out.status(f"✓ 恢复{device_type}: {device_display}")
                 return
-        Out.warning(f"⚠ 未找到{device_type}: {device_name}（设备可能已变化，使用默认值）")
+        Out.warning(f"⚠ 未找到{device_type}: {device_display}（设备可能已变化，使用默认值）")
 
     def toggle_translation(self):
         """启动/停止翻译"""
@@ -748,6 +782,7 @@ class MeetingTranslatorApp(QWidget):
 
     def start_translation(self):
         """启动翻译（根据模式）"""
+        Out.status(f"启动翻译（模式：{self.current_mode.value}）...")
         self.update_status("正在启动...", "running")
 
         try:
@@ -787,8 +822,12 @@ class MeetingTranslatorApp(QWidget):
 
             self.update_status("翻译进行中...", "running")
 
+            Out.status("翻译已启动")
+
         except Exception as e:
-            Out.error(f"启动翻译失败: {e}", exc_info=True)
+            Out.error(f"启动翻译失败: {e}")
+            import traceback
+            traceback.print_exc()
             self.update_status(f"启动失败: {str(e)}", "error")
 
             # 清理
@@ -796,6 +835,8 @@ class MeetingTranslatorApp(QWidget):
 
     def _start_listen_mode(self):
         """启动听模式（会议音频→中文字幕）"""
+        Out.status("启动听模式...")
+
         # 获取设备
         device = self.listen_device_combo.currentData()
         if not device:
@@ -809,15 +850,14 @@ class MeetingTranslatorApp(QWidget):
         # 2. 添加 SubtitleHandler 到 OutputManager
         self._update_subtitle_handler()
 
-        # 2. 启动翻译服务（英→中，仅字幕）
+        # 3. 启动翻译服务（英→中，仅字幕）
         self.listen_translation_service = MeetingTranslationServiceWrapper(
-            api_key=self.api_key,
+            api_key=None,  # 让工厂方法根据 provider 自动获取 API Key
             on_translation=self.on_listen_translation,
             source_language="en",
             target_language="zh",
             audio_enabled=False,  # 仅字幕
-            provider=self.provider,
-            on_error=self.on_service_error_callback
+            provider=self.provider  # 使用当前选择的 provider
         )
         self.listen_translation_service.start()
 
@@ -825,24 +865,24 @@ class MeetingTranslatorApp(QWidget):
         device_sample_rate = device['sample_rate']
         device_channels = device['channels']
 
-        # 根据 provider 确定目标采样率
-        if self.provider == "openai":
-            target_sample_rate = 24000  # OpenAI Realtime API 需要 24kHz
-        else:
-            target_sample_rate = 16000  # 阿里云需要 16kHz
+        Out.status(f"听模式设备: {device['name']}, {device_sample_rate}Hz, {device_channels}声道")
 
         self.listen_audio_capture = AudioCaptureThread(
             device_index=device['index'],
             on_audio_chunk=self.listen_translation_service.send_audio_chunk,
             sample_rate=device_sample_rate,
             channels=device_channels,
-            target_sample_rate=target_sample_rate,
+            target_sample_rate=16000,
             target_channels=1
         )
         self.listen_audio_capture.start()
 
+        Out.status("听模式已启动")
+
     def _start_speak_mode(self):
         """启动说模式（中文麦克风→英文虚拟麦克风）"""
+        Out.status("启动说模式...")
+
         # 获取设备
         input_device = self.speak_input_combo.currentData()
         output_device = self.speak_output_combo.currentData()
@@ -855,25 +895,26 @@ class MeetingTranslatorApp(QWidget):
         # 1. 启动音频输出线程（虚拟麦克风）
         # 使用自适应变速功能，在队列堆积时自动加速播放
         try:
-            # 使用设备的实际采样率，避免音频失真
-            device_output_rate = output_device.get('sample_rate', 48000)
+            Out.status("正在创建音频输出线程...")
 
-            # Different providers output different sample rates
-            # Doubao: 16kHz, Aliyun/OpenAI: 24kHz
-            api_output_rate = 16000 if self.provider == "doubao" else 24000
+            # 根据 provider 获取正确的输出采样率
+            api_output_rate = self.PROVIDER_OUTPUT_RATES.get(self.provider, 24000)
+            Out.status(f"API 音频输出采样率: {api_output_rate} Hz (provider={self.provider})")
 
             self.speak_audio_output = AudioOutputThread(
                 device_index=output_device['index'],
-                input_sample_rate=api_output_rate,  # Match provider output rate
-                output_sample_rate=device_output_rate,  # 使用设备实际采样率
-                channels=1,
+                input_sample_rate=api_output_rate,  # API 输出采样率（根据 provider）
+                output_sample_rate=output_device['sample_rate'],  # 使用设备的采样率（通常是44100），由 AudioOutputThread 自动重采样
+                channels=output_device['channels'],  # 使用设备的实际声道数（通常是2）
                 enable_dynamic_speed=True,  # 启用自适应变速
                 max_speed=2.0,  # 最高2倍速
                 queue_threshold=20,  # 队列低于20正常播放
                 target_catchup_time=10.0,  # 10秒内追上进度
                 max_chunks_per_batch=50  # 单次最多处理50个chunks
             )
+            Out.status("音频输出线程已创建，正在启动...")
             self.speak_audio_output.start()
+            Out.status("音频输出线程启动成功")
         except Exception as e:
             Out.error(f"启动音频输出线程失败: {e}", exc_info=True)
             raise
@@ -883,18 +924,20 @@ class MeetingTranslatorApp(QWidget):
         selected_voice = self.voice_combo.currentData()  # "Cherry" 或 "Nofish"
 
         try:
+            Out.status("正在创建翻译服务...")
             self.speak_translation_service = MeetingTranslationServiceWrapper(
-                api_key=self.api_key,
+                api_key=None,  # 让工厂方法根据 provider 自动获取 API Key
                 on_translation=self.on_speak_translation,
                 source_language="zh",
                 target_language="en",
                 audio_enabled=True,  # 启用音频
                 voice=selected_voice,
-                on_audio_chunk=self.speak_audio_output.write_audio_chunk,  # 写入虚拟麦克风
-                provider=self.provider,
-                on_error=self.on_service_error_callback
+                provider=self.provider,  # 使用当前选择的 provider
+                on_audio_chunk=self.speak_audio_output.write_audio_chunk  # 写入虚拟麦克风
             )
+            Out.status("翻译服务已创建，正在启动...")
             self.speak_translation_service.start()
+            Out.status("翻译服务启动成功")
         except Exception as e:
             Out.error(f"启动翻译服务失败: {e}", exc_info=True)
             # 清理已启动的音频输出
@@ -909,22 +952,23 @@ class MeetingTranslatorApp(QWidget):
         input_sample_rate = input_device['sample_rate']
         input_channels = input_device['channels']
 
-        # 根据 provider 确定目标采样率
-        if self.provider == "openai":
-            target_sample_rate = 24000  # OpenAI Realtime API 需要 24kHz
-        else:
-            target_sample_rate = 16000  # 阿里云需要 16kHz
+        Out.status(f"说模式输入: {input_device['name']}, {input_sample_rate}Hz, {input_channels}声道")
+        Out.status(f"说模式输出: {output_device['name']}")
+        Out.status(f"英文语音音色: {selected_voice}")
 
         try:
+            Out.status("正在创建音频捕获线程...")
             self.speak_audio_capture = AudioCaptureThread(
                 device_index=input_device['index'],
                 on_audio_chunk=self.speak_translation_service.send_audio_chunk,
                 sample_rate=input_sample_rate,
                 channels=input_channels,
-                target_sample_rate=target_sample_rate,
+                target_sample_rate=16000,
                 target_channels=1
             )
+            Out.status("音频捕获线程已创建，正在启动...")
             self.speak_audio_capture.start()
+            Out.status("音频捕获线程启动成功")
         except Exception as e:
             Out.error(f"启动音频捕获失败: {e}", exc_info=True)
             # 清理已启动的组件
@@ -940,6 +984,8 @@ class MeetingTranslatorApp(QWidget):
                     pass
             raise
 
+        Out.status("说模式已启动")
+
     def stop_translation(self, save_subtitles=True):
         """
         停止翻译
@@ -947,84 +993,82 @@ class MeetingTranslatorApp(QWidget):
         Args:
             save_subtitles: 是否保存字幕（默认True）
         """
+        Out.status("停止翻译...")
+
+        # 1. 保存字幕（如果有内容）
+        if save_subtitles and self.subtitle_window:
+            try:
+                # 使用新的路径结构
+                save_dir = RECORDS_DIR
+                filepath = self.subtitle_window.save_subtitles(save_dir)
+                if filepath:
+                    Out.status(f"✅ 字幕已保存: {filepath}")
+                    self.update_status(f"已保存到: {os.path.basename(filepath)}", "ready")
+            except Exception as e:
+                Out.error(f"保存字幕失败: {e}")
+
+        # 2. 停止听模式
         try:
-            # 1. 保存字幕（如果有内容）
-            if save_subtitles and self.subtitle_window:
-                try:
-                    filepath = self.subtitle_window.save_subtitles(RECORDS_DIR)
-                    if filepath:
-                        self.update_status(f"已保存到: {os.path.basename(filepath)}", "ready")
-                except Exception as e:
-                    Out.error(f"保存字幕失败: {e}", exc_info=True)
-
-            # 2. 停止听模式
-            try:
-                if self.listen_audio_capture:
-                    self.listen_audio_capture.stop()
-                    self.listen_audio_capture = None
-            except Exception as e:
-                Out.error(f"停止音频捕获时出错: {e}", exc_info=True)
-
-            try:
-                if self.listen_translation_service:
-                    self.listen_translation_service.stop()
-                    self.listen_translation_service = None
-            except Exception as e:
-                Out.error(f"停止听模式翻译服务时出错: {e}", exc_info=True)
-
-            # 3. 停止说模式
-            try:
-                if self.speak_audio_capture:
-                    self.speak_audio_capture.stop()
-                    self.speak_audio_capture = None
-            except Exception as e:
-                Out.error(f"停止说模式音频捕获时出错: {e}", exc_info=True)
-
-            try:
-                if self.speak_translation_service:
-                    self.speak_translation_service.stop()
-                    self.speak_translation_service = None
-            except Exception as e:
-                Out.error(f"停止说模式翻译服务时出错: {e}", exc_info=True)
-
-            try:
-                if self.speak_audio_output:
-                    self.speak_audio_output.stop()
-                    self.speak_audio_output = None
-            except Exception as e:
-                Out.error(f"停止音频输出时出错: {e}", exc_info=True)
-
-            # 4. 更新 UI
-            self.is_running = False
-
-            try:
-                self.start_btn.setText("▶️ 启动翻译")
-                self.start_btn.setObjectName("")  # 移除stopButton，恢复默认样式
-                # 强制重新应用样式
-                self.start_btn.style().unpolish(self.start_btn)
-                self.start_btn.style().polish(self.start_btn)
-
-                self.mode_combo.setEnabled(True)
-                self.listen_device_combo.setEnabled(True)
-                self.speak_input_combo.setEnabled(True)
-                self.speak_output_combo.setEnabled(True)
-                self.subtitle_btn.setEnabled(False)
-
-                if not save_subtitles:
-                    self.update_status("就绪", "ready")
-            except Exception as e:
-                Out.error(f"更新UI时出错: {e}", exc_info=True)
-
+            if self.listen_audio_capture:
+                self.listen_audio_capture.stop()
+                self.listen_audio_capture = None
         except Exception as e:
-            # 捕获整个stop_translation过程中的任何未捕获异常
-            Out.error(f"stop_translation发生严重错误: {e}", exc_info=True)
-            # 确保UI状态正确
-            self.is_running = False
-            try:
-                self.start_btn.setText("▶️ 启动翻译")
-                self.mode_combo.setEnabled(True)
-            except:
-                pass
+            Out.error(f"停止音频捕获时出错: {e}")
+
+        try:
+            if self.listen_translation_service:
+                self.listen_translation_service.stop()
+                self.listen_translation_service = None
+        except Exception as e:
+            Out.error(f"停止翻译服务时出错: {e}")
+
+        # 3. 停止说模式
+        try:
+            if self.speak_audio_capture:
+                self.speak_audio_capture.stop()
+                self.speak_audio_capture = None
+        except Exception as e:
+            Out.error(f"停止说模式音频捕获时出错: {e}")
+
+        try:
+            if self.speak_translation_service:
+                self.speak_translation_service.stop()
+                self.speak_translation_service = None
+        except Exception as e:
+            Out.error(f"停止说模式翻译服务时出错: {e}")
+
+        try:
+            if self.speak_audio_output:
+                self.speak_audio_output.stop()
+                self.speak_audio_output = None
+        except Exception as e:
+            Out.error(f"停止音频输出时出错: {e}")
+
+        # 4. 更新 UI
+        self.is_running = False
+
+        try:
+            self.start_btn.setText("▶️ 启动翻译")
+            self.start_btn.setObjectName("")  # 移除stopButton，恢复默认样式
+            # 强制重新应用样式
+            self.start_btn.style().unpolish(self.start_btn)
+            self.start_btn.style().polish(self.start_btn)
+
+            self.mode_combo.setEnabled(True)
+            self.listen_device_combo.setEnabled(True)
+            self.speak_input_combo.setEnabled(True)
+            self.speak_output_combo.setEnabled(True)
+            self.subtitle_btn.setEnabled(False)
+
+            if not save_subtitles:
+                self.update_status("就绪", "ready")
+        except Exception as e:
+            Out.error(f"更新UI时出错: {e}")
+            import traceback
+            traceback.print_exc()
+
+        Out.status("翻译已停止")
+        Out.status(f"主窗口状态: visible={self.isVisible()}, enabled={self.isEnabled()}")
 
     def toggle_subtitle_window(self):
         """显示/隐藏字幕窗口"""
@@ -1043,8 +1087,9 @@ class MeetingTranslatorApp(QWidget):
 
     def on_speak_translation(self, source_text: str, target_text: str, is_final: bool = True):
         """说模式翻译回调（在独立线程中调用）"""
-        # 说模式只需要音频输出，文本通过OutputManager输出
-        pass
+        # 说模式只需要音频输出，文本可选记录
+        if is_final:
+            Out.translation(f"[说模式翻译] {source_text} → {target_text}")
 
     def on_translation_received(self, source_text: str, target_text: str, is_final: bool = True):
         """
@@ -1055,53 +1100,18 @@ class MeetingTranslatorApp(QWidget):
             target_text: 目标语言文本
             is_final: 是否为最终文本（True=已finalize，False=增量文本）
         """
+        if is_final:
+            Out.translation(f"翻译: {source_text} -> {target_text}")
+        else:
+            Out.debug(f"增量翻译: {target_text}")
+
         # 更新字幕窗口
         if self.subtitle_window:
             self.subtitle_window.update_subtitle(source_text, target_text, is_final=is_final)
 
-    def on_service_error_callback(self, error_message: str, exception: Exception):
-        """
-        服务错误回调（在服务线程中调用）
-        发送信号到主线程进行UI更新
-
-        Args:
-            error_message: 用户友好的错误消息
-            exception: 原始异常对象
-        """
-        # 发送信号到主线程
-        self.signals.error_occurred.emit(error_message, exception)
-
-    def on_service_error(self, error_message: str, exception: Exception):
-        """
-        服务错误处理（在主线程中调用）
-        显示错误对话框并停止翻译服务
-
-        Args:
-            error_message: 用户友好的错误消息
-            exception: 原始异常对象
-        """
-        from PyQt5.QtWidgets import QMessageBox
-
-        # 停止翻译服务（如果正在运行）
-        if self.is_running:
-            self.stop_translation()
-
-        # 显示错误对话框
-        msg_box = QMessageBox(self)
-        msg_box.setIcon(QMessageBox.Critical)
-        msg_box.setWindowTitle("翻译服务错误")
-        msg_box.setText(error_message)
-        msg_box.setStandardButtons(QMessageBox.Ok)
-        msg_box.exec_()
-
-        # 更新状态
-        self.update_status("错误：服务启动失败", "error")
-
     def closeEvent(self, event):
         """关闭事件"""
-        import sys
-        sys.stdout.flush()
-        sys.stderr.flush()
+        Out.status("主窗口关闭事件被触发")
 
         # 停止翻译
         self.stop_translation()
@@ -1114,6 +1124,7 @@ class MeetingTranslatorApp(QWidget):
         if self.device_manager:
             self.device_manager.cleanup()
 
+        Out.status("主窗口即将关闭")
         event.accept()
 
 
@@ -1124,27 +1135,27 @@ def exception_hook(exc_type, exc_value, exc_traceback):
         sys.__excepthook__(exc_type, exc_value, exc_traceback)
         return
 
-    Out.error("未捕获的异常", exc_info=True)
+    # 提供更详细的错误信息
+    import traceback
+
+    error_msg = f"未捕获的异常: {exc_type.__name__}"
+
+    if exc_value is not None:
+        error_msg += f": {exc_value}"
+    else:
+        error_msg += " (异常值为 None)"
+
+    # 打印完整的堆栈跟踪
+    error_msg += "\n\n堆栈跟踪:"
+    error_msg += ''.join(traceback.format_exception(exc_type, exc_value, exc_traceback))
+
+    Out.error(error_msg, exc_info=True)
 
 
 def main():
     """主函数"""
-    # 安装 Qt 消息处理器（过滤跨屏幕警告等）
-    qInstallMessageHandler(qt_message_handler)
-
     # 安装全局异常处理钩子
     sys.excepthook = exception_hook
-
-    # 抑制WebSocket关闭时的事件循环警告（不影响功能）
-    import warnings
-    warnings.filterwarnings("ignore", message=".*coroutine.*WebSocketCommonProtocol.close_connection.*")
-    warnings.filterwarnings("ignore", message=".*Task was destroyed but it is pending.*")
-
-    # 显示初始化信息（目录迁移等）
-    init_message = get_initialization_message()
-    if init_message:
-        print(init_message)
-        print()  # 空行分隔
 
     try:
         app = QApplication(sys.argv)
@@ -1153,7 +1164,10 @@ def main():
         window = MeetingTranslatorApp()
         window.show()
 
+        Out.status("进入主事件循环")
         exit_code = app.exec_()
+        Out.status(f"主事件循环已退出，退出码: {exit_code}")
+
         sys.exit(exit_code)
     except Exception as e:
         Out.error(f"主函数发生异常: {e}", exc_info=True)

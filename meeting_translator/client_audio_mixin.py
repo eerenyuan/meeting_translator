@@ -52,8 +52,11 @@ class AudioPlayerMixin:
 
         # 音频播放线程
         self._audio_thread: Optional[Thread] = None
-        self._audio_queue: Optional[queue.Queue] = None
+        self.__audio_queue: Optional[queue.Queue] = None  # 私有队列（完全封装）
         self._stop_audio_event: Optional[asyncio.Event] = None
+
+        # 音频回调列表（用于转发音频数据到外部，如虚拟麦克风）
+        self._audio_callbacks: list = []
 
         # 调用下一个类的 __init__ (cooperative inheritance)
         super().__init__(*args, **kwargs)
@@ -92,7 +95,7 @@ class AudioPlayerMixin:
         启动音频播放线程
 
         创建后台线程来播放接收到的音频数据。
-        线程会从 self._audio_queue 获取音频数据并播放。
+        线程会从内部队列获取音频数据并播放。
         """
         if self._audio_thread is not None and self._audio_thread.is_alive():
             # 音频播放线程已在运行
@@ -100,7 +103,7 @@ class AudioPlayerMixin:
 
         import pyaudio
 
-        self._audio_queue = queue.Queue()
+        self.__audio_queue = queue.Queue()
         self._stop_audio_event = asyncio.Event()
 
         def audio_player_loop():
@@ -122,7 +125,7 @@ class AudioPlayerMixin:
                 while not self._stop_audio_event.is_set():
                     try:
                         # 从队列获取音频数据（超时0.1秒）
-                        audio_data = self._audio_queue.get(timeout=0.1)
+                        audio_data = self.__audio_queue.get(timeout=0.1)
 
                         if audio_data is None:  # 结束信号
                             break
@@ -147,6 +150,7 @@ class AudioPlayerMixin:
         # 启动音频播放线程
         self._audio_thread = Thread(target=audio_player_loop, daemon=True)
         self._audio_thread.start()
+        self.output_status(f"✅ 音频播放器已启动 (回调数量: {len(self._audio_callbacks)}, rate: {self.output_rate}Hz)")
 
     def stop_audio_player(self):
         """
@@ -161,8 +165,8 @@ class AudioPlayerMixin:
         self._stop_audio_event.set()
 
         # 发送结束标记到队列
-        if self._audio_queue:
-            self._audio_queue.put(None)
+        if self.__audio_queue:
+            self.__audio_queue.put(None)
 
         # 等待线程结束（最多2秒）
         self._audio_thread.join(timeout=2.0)
@@ -171,18 +175,54 @@ class AudioPlayerMixin:
             self.output_warning("音频播放线程未能在2秒内停止")
 
         self._audio_thread = None
-        self._audio_queue = None
+        self.__audio_queue = None
         self._stop_audio_event = None
 
     def queue_audio(self, audio_data: bytes):
         """
-        将音频数据放入播放队列
+        将音频数据放入播放队列，并触发所有注册的回调
 
         Args:
             audio_data: 音频数据（PCM格式）
         """
-        if self._audio_queue:
-            self._audio_queue.put(audio_data)
+        # 1. 放入内部队列供播放
+        if self.__audio_queue:
+            self.__audio_queue.put(audio_data)
+
+        # 2. 触发所有回调（用于转发到外部，如虚拟麦克风）
+        for callback in self._audio_callbacks:
+            try:
+                callback(audio_data)
+            except Exception as e:
+                self.output_error(f"音频回调执行失败: {e}")
+
+    def register_audio_callback(self, callback):
+        """
+        注册音频数据回调函数
+
+        当收到音频数据时，除了播放外，还会调用所有注册的回调函数。
+        这用于将音频数据转发到外部（例如虚拟麦克风）。
+
+        Args:
+            callback: 回调函数，签名应为 callback(audio_data: bytes)
+
+        Example:
+            client.register_audio_callback(lambda data: print(f"收到 {len(data)} 字节音频"))
+        """
+        if callback not in self._audio_callbacks:
+            self._audio_callbacks.append(callback)
+            self.output_status(f"已注册音频回调，当前回调数量: {len(self._audio_callbacks)}")
+
+    def unregister_audio_callback(self, callback):
+        """
+        取消注册音频回调函数
+
+        Args:
+            callback: 要移除的回调函数
+        """
+        if callback in self._audio_callbacks:
+            self._audio_callbacks.remove(callback)
+            self.output_debug(f"已移除音频回调，当前回调数量: {len(self._audio_callbacks)}")
 
     def supports_voice_testing(self) -> bool:
         """

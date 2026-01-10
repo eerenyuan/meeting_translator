@@ -24,7 +24,7 @@ try:
 except ImportError:
     WSOLA_AVAILABLE = False
 
-logger = logging.getLogger(__name__)
+from output_manager import Out
 
 
 class AudioOutputThread:
@@ -72,7 +72,7 @@ class AudioOutputThread:
         self.max_chunks_per_batch = max_chunks_per_batch
 
         if self.enable_dynamic_speed and not WSOLA_AVAILABLE:
-            logger.warning("动态变速需要 audiotsm 库，已禁用。请运行: pip install audiotsm")
+            Out.warning("动态变速需要 audiotsm 库，已禁用。请运行: pip install audiotsm")
             self.enable_dynamic_speed = False
 
         self.is_running = False
@@ -88,7 +88,7 @@ class AudioOutputThread:
     def start(self):
         """启动输出线程"""
         if self.is_running:
-            logger.warning("音频输出线程已在运行")
+            Out.warning("音频输出线程已在运行")
             return
 
         self.is_running = True
@@ -96,29 +96,22 @@ class AudioOutputThread:
         self.thread.start()
 
         if self.enable_dynamic_speed:
-            logger.info(
+            Out.status(
                 f"音频输出线程已启动（设备: {self.device_index}, "
                 f"自适应变速: 最高{self.max_speed}x, "
                 f"队列阈值: {self.queue_threshold}, "
                 f"追赶时间: {self.target_catchup_time}s）"
             )
         else:
-            logger.info(f"音频输出线程已启动（设备: {self.device_index}, 动态变速: 禁用）")
+            Out.status(f"音频输出线程已启动（设备: {self.device_index}, 动态变速: 禁用）")
 
     def stop(self):
         """停止输出线程"""
         if not self.is_running:
             return
 
-        logger.info("停止音频输出线程...")
+        Out.status("停止音频输出线程...")
         self.is_running = False
-
-        # 清空队列中的未播放数据，避免停止时播放积压内容
-        while not self.audio_queue.empty():
-            try:
-                self.audio_queue.get_nowait()
-            except queue.Empty:
-                break
 
         # 发送终止信号
         try:
@@ -126,21 +119,24 @@ class AudioOutputThread:
         except queue.Full:
             pass
 
-        # 等待线程结束（最多2秒）
-        if self.thread and self.thread.is_alive():
-            logger.debug("等待音频输出线程退出...")
+        if self.thread:
             self.thread.join(timeout=2)
 
-        # ⚠️ 关键：不主动关闭stream和pyaudio
-        # 原因：
-        # 1. daemon线程可能还在等待音频数据，无法及时退出
-        # 2. 如果daemon线程还在使用stream，调用close()会导致程序崩溃
-        # 3. Python GC会在对象引用清零后自动清理资源
-        self.stream = None
-        self.pyaudio_instance = None
-        logger.debug("音频流和PyAudio引用已清除（交给GC清理）")
+        # 清理资源
+        if self.stream:
+            try:
+                self.stream.stop_stream()
+                self.stream.close()
+            except Exception as e:
+                Out.debug(f"关闭输出流时出错: {e}")
 
-        logger.info("音频输出线程已停止")
+        if self.pyaudio_instance:
+            try:
+                self.pyaudio_instance.terminate()
+            except Exception as e:
+                Out.debug(f"终止 PyAudio 时出错: {e}")
+
+        Out.status("音频输出线程已停止")
 
     def _calculate_adaptive_speed(self, queue_size: int) -> float:
         """
@@ -217,7 +213,7 @@ class AudioOutputThread:
             return output_bytes
 
         except Exception as e:
-            logger.error(f"WSOLA 处理失败: {e}")
+            Out.error(f"WSOLA 处理失败: {e}")
             return audio_data  # 失败时返回原始音频
 
         finally:
@@ -240,6 +236,18 @@ class AudioOutputThread:
         if not self.is_running:
             return
 
+        # 如果输出设备是立体声（channels=2），需要将单声道转换为立体声
+        if self.channels == 2:
+            # 单声道 → 立体声：复制到两个声道
+            audio_array = np.frombuffer(audio_data, dtype=np.int16)
+            stereo_array = np.zeros(len(audio_array) * 2, dtype=np.int16)
+            stereo_array[0::2] = audio_array  # 左声道
+            stereo_array[1::2] = audio_array  # 右声道
+            audio_data = stereo_array.tobytes()
+
+        # 注意：为了性能，直接入队原始 24kHz 数据
+        # WSOLA 和重采样都在 _output_loop 中批量处理
+
         try:
             # 先尝试非阻塞写入
             self.audio_queue.put_nowait(audio_data)
@@ -251,12 +259,12 @@ class AudioOutputThread:
                 # 记录队列满的情况
                 self.queue_full_warnings += 1
                 if self.queue_full_warnings % 50 == 1:
-                    logger.warning(
+                    Out.warning(
                         f"音频输出队列已满 {self.queue_full_warnings} 次，使用阻塞写入保证完整性（可能略有延迟）"
                     )
             except queue.Full:
                 # 如果 2 秒后仍然无法写入，说明播放严重滞后，记录错误
-                logger.error("音频输出队列持续满载，无法写入音频块")
+                Out.error("音频输出队列持续满载，无法写入音频块")
 
     def _resample_audio(self, audio_data: bytes, state=None) -> tuple:
         """
@@ -298,7 +306,7 @@ class AudioOutputThread:
                 frames_per_buffer=self.chunk_size
             )
 
-            logger.info(f"音频输出流已打开（{self.output_sample_rate}Hz, {self.channels}ch）")
+            Out.status(f"音频输出流已打开（{self.output_sample_rate}Hz, {self.channels}ch）")
 
             # 重采样状态（用于批量处理）
             resample_state = None
@@ -324,14 +332,14 @@ class AudioOutputThread:
                         try:
                             self.stream.write(audio_data)
                         except Exception as write_err:
-                            logger.error(f"音频写入失败（设备可能已断开或状态变化）: {write_err}")
+                            Out.error(f"音频写入失败（设备可能已断开或状态变化）: {write_err}")
                             # 清空队列，避免阻塞翻译服务
                             while not self.audio_queue.empty():
                                 try:
                                     self.audio_queue.get_nowait()
                                 except:
                                     break
-                            logger.error("音频输出已停止，请重新启动翻译")
+                            Out.error("音频输出已停止，请重新启动翻译")
                             self.is_running = False
                             break
 
@@ -363,7 +371,7 @@ class AudioOutputThread:
                             # 记录日志
                             self.speed_changes += 1
                             if self.speed_changes % 10 == 1:
-                                logger.info(
+                                Out.status(
                                     f"自适应加速: {adaptive_speed:.2f}x "
                                     f"(队列: {queue_size} → {self.audio_queue.qsize()}, "
                                     f"处理: {chunks_to_take} chunks)"
@@ -378,26 +386,26 @@ class AudioOutputThread:
                         try:
                             self.stream.write(output_audio)
                         except Exception as write_err:
-                            logger.error(f"音频写入失败（设备可能已断开或状态变化）: {write_err}")
+                            Out.error(f"音频写入失败（设备可能已断开或状态变化）: {write_err}")
                             # 清空队列，避免阻塞翻译服务
                             while not self.audio_queue.empty():
                                 try:
                                     self.audio_queue.get_nowait()
                                 except:
                                     break
-                            logger.error("音频输出已停止，请重新启动翻译")
+                            Out.error("音频输出已停止，请重新启动翻译")
                             self.is_running = False
                             break
 
                 except queue.Empty:
                     continue
                 except Exception as e:
-                    logger.error(f"写入音频数据时出错: {e}")
+                    Out.error(f"写入音频数据时出错: {e}")
                     import traceback
                     traceback.print_exc()
 
         except Exception as e:
-            logger.error(f"音频输出线程错误: {e}")
+            Out.error(f"音频输出线程错误: {e}")
             import traceback
             traceback.print_exc()
 
@@ -407,12 +415,12 @@ class AudioOutputThread:
                 try:
                     self.stream.stop_stream()
                     self.stream.close()
-                    logger.debug("音频流已关闭")
+                    Out.debug("音频流已关闭")
                 except Exception as e:
-                    logger.debug(f"关闭音频流时出错: {e}")
+                    Out.debug(f"关闭音频流时出错: {e}")
 
             # 注意：不调用 terminate()，因为多个线程可能共享 PyAudio
             # 让 Python GC 自动清理 PyAudio 实例
             if self.pyaudio_instance:
-                logger.debug("PyAudio 实例将由 GC 清理（不调用 terminate）")
+                Out.debug("PyAudio 实例将由 GC 清理（不调用 terminate）")
                 self.pyaudio_instance = None

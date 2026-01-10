@@ -6,35 +6,14 @@
 import asyncio
 import sys
 import os
-import logging
 from typing import Callable, Optional
 
+# 添加 poc 目录到路径
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'poc'))
+
 from translation_client_factory import TranslationClientFactory
-from output_manager import OutputManager
 
-logger = logging.getLogger(__name__)
-
-
-# 设置全局unraisable异常处理器（抑制WebSocket关闭时的"Exception ignored"警告）
-def _suppress_websocket_unraisable_exceptions(unraisable):
-    """抑制WebSocket关闭时产生的不可触发异常"""
-    # 检查是否是WebSocket close_connection相关的异常
-    if unraisable.object and hasattr(unraisable.object, '__name__'):
-        if 'close_connection' in unraisable.object.__name__:
-            return  # 抑制
-
-    # 检查异常类型
-    if unraisable.exc_type and issubclass(unraisable.exc_type, RuntimeError):
-        exc_msg = str(unraisable.exc_value) if unraisable.exc_value else ''
-        if 'event loop' in exc_msg.lower():
-            return  # 抑制 "no running event loop" 错误
-
-    # 其他异常使用默认处理器
-    sys.__unraisablehook__(unraisable)
-
-
-# 安装全局unraisable异常处理器
-sys.unraisablehook = _suppress_websocket_unraisable_exceptions
+from output_manager import Out
 
 
 class MeetingTranslationService:
@@ -62,7 +41,7 @@ class MeetingTranslationService:
             audio_enabled: 是否启用音频输出（说模式需要）
             voice: 语音选择（provider-specific，或自动使用默认值）
             on_audio_chunk: 音频数据回调
-            provider: 翻译服务提供商（aliyun/openai，默认从环境变量读取）
+            provider: 翻译服务提供商（aliyun/openai/doubao，默认从环境变量读取）
         """
         self.api_key = api_key
         self.on_translation = on_translation
@@ -81,17 +60,21 @@ class MeetingTranslationService:
     async def start(self):
         """启动翻译服务"""
         if self.is_running:
-            logger.warning("翻译服务已在运行")
+            Out.warning("翻译服务已在运行")
             return
 
-        logger.info("启动翻译服务...")
+        Out.status("启动翻译服务...")
 
         try:
             # ！重要：先设置 is_running，避免竞态条件
             self.is_running = True
 
+            # 创建音频队列（用于 S2S 模式）
+            import queue
+            audio_queue = queue.Queue() if self.audio_enabled else None
+
             # 使用工厂模式创建客户端（支持多个提供商）
-            logger.info(f"创建翻译客户端（provider={self.provider or 'auto'}, audio_enabled={self.audio_enabled}）")
+            Out.status(f"创建翻译客户端（provider={self.provider or 'auto'}, audio_enabled={self.audio_enabled}）")
             self.client = TranslationClientFactory.create_client(
                 provider=self.provider,
                 api_key=self.api_key,
@@ -99,7 +82,8 @@ class MeetingTranslationService:
                 target_language=self.target_language,
                 voice=self.voice,
                 audio_enabled=self.audio_enabled,
-                glossary_file=None
+                audio_queue=audio_queue,  # 传递内部队列
+                glossary=None  # 不使用词汇表
             )
 
             # 连接到服务
@@ -114,14 +98,10 @@ class MeetingTranslationService:
                 self._run_with_auto_reconnect()
             )
 
-            # 使用 OutputManager 发送状态信息
-            manager = OutputManager.get_instance()
-            manager.status("翻译服务已启动")
+            Out.status("翻译服务已启动")
 
         except Exception as e:
-            # 错误通过 OutputManager
-            manager = OutputManager.get_instance()
-            manager.error(f"启动翻译服务失败: {e}")
+            Out.error(f"启动翻译服务失败: {e}")
             raise
 
     async def stop(self):
@@ -129,29 +109,31 @@ class MeetingTranslationService:
         if not self.is_running:
             return
 
-        logger.info("停止翻译服务...")
+        Out.status("停止翻译服务...")
 
-        # 立即设置停止标志，让_run_with_auto_reconnect自然退出
         self.is_running = False
 
-        # 取消消息处理任务（如果存在）
-        if self.message_task and not self.message_task.done():
-            logger.debug("取消消息处理任务...")
+        # 取消消息处理任务
+        if self.message_task:
             self.message_task.cancel()
             try:
                 await asyncio.wait_for(self.message_task, timeout=2.0)
-                logger.debug("消息处理任务已取消")
-            except asyncio.CancelledError:
-                logger.debug("消息任务被成功取消")
-            except asyncio.TimeoutError:
-                logger.warning("取消消息任务超时")
+            except (asyncio.CancelledError, asyncio.TimeoutError):
+                Out.debug("消息处理任务已取消")
             except Exception as e:
-                logger.debug(f"取消消息任务时出错: {e}")
+                Out.debug(f"取消消息任务时出错: {e}")
 
-        # 注意：不关闭client，让_run_with_auto_reconnect在检测到is_running=False后自然退出
-        # 这样避免了与重连逻辑的race condition
+        # 关闭客户端
+        if self.client:
+            try:
+                await asyncio.wait_for(self.client.close(), timeout=2.0)
+                Out.debug("WebSocket 客户端已关闭")
+            except asyncio.TimeoutError:
+                Out.warning("关闭 WebSocket 超时")
+            except Exception as e:
+                Out.debug(f"关闭客户端时出错: {e}")
 
-        logger.info("翻译服务已停止")
+        Out.status("翻译服务已停止")
 
     async def send_audio_chunk(self, audio_data: bytes):
         """
@@ -170,8 +152,8 @@ class MeetingTranslationService:
         运行消息处理循环，带自动重连功能
         当检测到连接断开时，会自动尝试重连
         """
-        reconnect_delay = 1  # 重连延迟（秒）- 减少到1秒加快重连
-        max_reconnect_attempts = 5  # 最大重连次数 - 增加到5次（session timeout是常见情况）
+        reconnect_delay = 2  # 重连延迟（秒）
+        max_reconnect_attempts = 3  # 最大重连次数
         reconnect_count = 0
 
         while self.is_running:
@@ -181,11 +163,11 @@ class MeetingTranslationService:
 
                 # 如果正常退出循环，检查是否需要重连
                 if self.is_running and not self.client.is_connected:
-                    logger.warning("连接已断开，准备重连...")
+                    Out.warning("连接已断开，准备重连...")
                     reconnect_count += 1
 
                     if reconnect_count > max_reconnect_attempts:
-                        logger.error(f"重连失败次数过多 ({max_reconnect_attempts})，停止服务")
+                        Out.error(f"重连失败次数过多 ({max_reconnect_attempts})，停止服务")
                         # 通知用户
                         if self.on_translation:
                             self.on_translation(
@@ -196,13 +178,8 @@ class MeetingTranslationService:
                         break
 
                     # 等待后重连
-                    logger.info(f"等待 {reconnect_delay} 秒后重连（第 {reconnect_count}/{max_reconnect_attempts} 次）...")
+                    Out.status(f"等待 {reconnect_delay} 秒后重连（第 {reconnect_count}/{max_reconnect_attempts} 次）...")
                     await asyncio.sleep(reconnect_delay)
-
-                    # 再次检查是否应该停止（可能在sleep期间调用了stop）
-                    if not self.is_running:
-                        logger.info("[STOP] 在重连延迟期间检测到停止信号，退出重连逻辑")
-                        break
 
                     # 关闭旧连接
                     try:
@@ -210,10 +187,9 @@ class MeetingTranslationService:
                     except:
                         pass
 
-                    # 再次检查是否应该停止
-                    if not self.is_running:
-                        logger.info("[STOP] 在关闭旧连接后检测到停止信号，退出重连逻辑")
-                        break
+                    # 创建新的音频队列（用于 S2S 模式）
+                    import queue
+                    audio_queue = queue.Queue() if self.audio_enabled else None
 
                     # 重新创建客户端（使用工厂模式）
                     self.client = TranslationClientFactory.create_client(
@@ -223,18 +199,13 @@ class MeetingTranslationService:
                         target_language=self.target_language,
                         voice=self.voice,
                         audio_enabled=self.audio_enabled,
-                        glossary_file=None
+                        audio_queue=audio_queue,
+                        glossary=None
                     )
 
                     # 重新连接
                     await self.client.connect()
-
-                    # 再次检查是否应该停止
-                    if not self.is_running:
-                        logger.info("[STOP] 在建立新连接后检测到停止信号，退出重连逻辑")
-                        break
-
-                    logger.info("重连成功（自动）")
+                    Out.status("重连成功")
 
                     # 重置重连计数
                     reconnect_count = 0
@@ -247,18 +218,23 @@ class MeetingTranslationService:
                         # 启动新的转发线程
                         self._start_audio_forwarding()
 
-                    # 不显示"连接已恢复"消息（对于timeout这种正常情况，用户不需要知道）
-                    # session timeout是Doubao API的正常行为，当没有音频输入时会超时
+                    # 通知用户重连成功
+                    if self.on_translation:
+                        self.on_translation(
+                            "",
+                            "[提示] 连接已恢复",
+                            is_final=True
+                        )
 
                 else:
                     # 正常退出
                     break
 
             except asyncio.CancelledError:
-                logger.debug("消息处理任务被取消")
+                Out.debug("消息处理任务被取消")
                 break
             except Exception as e:
-                logger.error(f"消息处理错误: {e}")
+                Out.error(f"消息处理错误: {e}")
                 import traceback
                 traceback.print_exc()
 
@@ -276,23 +252,8 @@ class MeetingTranslationService:
         # 解析文本
         if text.startswith("[源]"):
             source_text = text[4:].strip()
-            # 更新源文本为当前这一轮的
+            # 暂存源文本（等待翻译）
             self._current_source = source_text
-
-            # 如果有待处理的翻译（翻译先到，源文本后到），现在触发回调
-            if hasattr(self, '_pending_translation'):
-                target_text = self._pending_translation
-                delattr(self, '_pending_translation')
-
-                logger.debug(f"收到延迟的源文本，触发待处理的翻译回调: {source_text} → {target_text}")
-                if self.on_translation:
-                    try:
-                        self.on_translation(source_text, target_text, is_final=True)
-                    except Exception as e:
-                        logger.error(f"翻译回调执行失败: {e}")
-
-                # 清空源文本，避免下一轮重用
-                self._current_source = ''
 
         elif text.startswith("[译增量]"):
             # 增量文本（未finalize）
@@ -303,7 +264,7 @@ class MeetingTranslationService:
             # 直接替换（不累积）
             self._partial_translation = partial_text
 
-            # 获取源文本（增量翻译使用上一轮的源文本也可以接受）
+            # 获取源文本
             source_text = getattr(self, '_current_source', '')
 
             # 调用用户回调（标记为增量）
@@ -311,7 +272,7 @@ class MeetingTranslationService:
                 try:
                     self.on_translation(source_text, self._partial_translation, is_final=False)
                 except Exception as e:
-                    logger.error(f"翻译回调执行失败: {e}")
+                    Out.error(f"翻译回调执行失败: {e}")
 
         elif text.startswith("[译]"):
             # 最终翻译文本
@@ -323,55 +284,55 @@ class MeetingTranslationService:
             # 获取源文本
             source_text = getattr(self, '_current_source', '')
 
-            # 如果源文本为空，说明 [源] 事件还没到达，需要等待
-            # 暂存翻译结果，等 [源] 事件到达后再触发回调
-            if not source_text:
-                logger.debug(f"翻译先到达，源文本为空，暂存翻译: {target_text}")
-                self._pending_translation = target_text
-            else:
-                # 源文本已经存在，清空待处理状态并正常回调
-                if hasattr(self, '_pending_translation'):
-                    delattr(self, '_pending_translation')
-
-                # 调用用户回调（标记为最终）
-                if self.on_translation:
-                    try:
-                        self.on_translation(source_text, target_text, is_final=True)
-                    except Exception as e:
-                        logger.error(f"翻译回调执行失败: {e}")
-
-                # 清空源文本，避免下一轮重用
-                self._current_source = ''
+            # 调用用户回调（标记为最终）
+            if self.on_translation:
+                try:
+                    self.on_translation(source_text, target_text, is_final=True)
+                except Exception as e:
+                    Out.error(f"翻译回调执行失败: {e}")
 
     def _start_audio_forwarding(self):
         """启动音频转发线程（从 API 队列→外部回调）"""
         import threading
         import queue
 
+        audio_chunk_count = [0]  # 使用列表以便在闭包中修改
+
         def forward_loop():
             """音频转发循环（在独立线程中运行）"""
+            Out.status("[音频转发] 转发循环已启动")
+
             while self.is_running:
                 try:
-                    # 从 API 客户端的队列获取音频数据
-                    audio_data = self.client.audio_playback_queue.get(timeout=0.1)
+                    # 从 API 客户端的外部队列获取音频数据
+                    audio_data = self.client.audio_queue.get(timeout=0.1)
 
                     if audio_data is None:
+                        Out.status("[音频转发] 收到终止信号")
                         break
 
                     # 转发到外部回调（写入虚拟麦克风）
                     if self.on_audio_chunk:
+                        audio_chunk_count[0] += 1
+                        if audio_chunk_count[0] <= 3:  # 只记录前3个块
+                            Out.status(f"[音频转发] 转发音频块 #{audio_chunk_count[0]}, 大小: {len(audio_data)} 字节")
                         self.on_audio_chunk(audio_data)
 
                     # 标记任务完成
-                    self.client.audio_playback_queue.task_done()
+                    self.client.audio_queue.task_done()
 
                 except queue.Empty:
                     continue
                 except Exception as e:
-                    logger.error(f"音频转发错误: {e}")
+                    Out.error(f"[音频转发] 转发错误: {e}")
+                    import traceback
+                    traceback.print_exc()
+
+            Out.status(f"[音频转发] 转发循环已停止，共转发 {audio_chunk_count[0]} 个音频块")
 
         self._audio_forward_thread = threading.Thread(target=forward_loop, daemon=True)
         self._audio_forward_thread.start()
+        Out.status("音频转发线程已启动")
 
 
 class MeetingTranslationServiceWrapper:
@@ -389,8 +350,7 @@ class MeetingTranslationServiceWrapper:
         audio_enabled: bool = False,
         voice: Optional[str] = None,
         on_audio_chunk: Optional[Callable[[bytes], None]] = None,
-        provider: Optional[str] = None,
-        on_error: Optional[Callable[[str, Exception], None]] = None
+        provider: Optional[str] = None
     ):
         self.api_key = api_key
         self.on_translation = on_translation
@@ -400,13 +360,11 @@ class MeetingTranslationServiceWrapper:
         self.voice = voice
         self.on_audio_chunk = on_audio_chunk
         self.provider = provider
-        self.on_error = on_error
 
         self.service = None
         self.loop = None
         self.thread = None
         self.is_running = False
-        self.startup_error = None
 
     def start(self):
         """启动翻译服务（同步方法）"""
@@ -418,148 +376,93 @@ class MeetingTranslationServiceWrapper:
         # 创建事件循环
         self.loop = asyncio.new_event_loop()
 
-        # 设置自定义异常处理器，抑制WebSocket关闭时的警告
-        def exception_handler(loop, context):
-            """自定义异常处理器，抑制WebSocket关闭相关的异常"""
-            exception = context.get('exception')
-            message = context.get('message', '')
-
-            # 抑制WebSocket关闭相关的异常
-            if exception and isinstance(exception, RuntimeError):
-                if 'event loop' in str(exception).lower():
-                    return  # 抑制 "no running event loop" 错误
-
-            # 抑制 "Task was destroyed but it is pending" 警告
-            if 'Task was destroyed but it is pending' in message:
-                return
-
-            # 抑制WebSocket close_connection相关的异常
-            if 'close_connection' in message.lower():
-                return
-
-            # 其他异常正常处理
-            loop.default_exception_handler(context)
-
-        self.loop.set_exception_handler(exception_handler)
-
         # 在独立线程中运行事件循环
         def run_loop():
             asyncio.set_event_loop(self.loop)
 
-            try:
-                # 创建翻译服务
-                self.service = MeetingTranslationService(
-                    api_key=self.api_key,
-                    on_translation=self.on_translation,
-                    source_language=self.source_language,
-                    target_language=self.target_language,
-                    audio_enabled=self.audio_enabled,
-                    voice=self.voice,
-                    on_audio_chunk=self.on_audio_chunk,
-                    provider=self.provider
-                )
+            # 创建翻译服务
+            self.service = MeetingTranslationService(
+                api_key=self.api_key,
+                on_translation=self.on_translation,
+                source_language=self.source_language,
+                target_language=self.target_language,
+                audio_enabled=self.audio_enabled,
+                voice=self.voice,
+                on_audio_chunk=self.on_audio_chunk,
+                provider=self.provider
+            )
 
-                # 启动翻译服务
-                self.loop.run_until_complete(self.service.start())
+            # 启动翻译服务
+            self.loop.run_until_complete(self.service.start())
 
-                # 运行事件循环
-                self.loop.run_forever()
-
-            except Exception as e:
-                logger.error(f"翻译服务启动失败: {e}")
-                self.startup_error = e
-                self.is_running = False
-
-                # 调用错误回调（如果提供）
-                if self.on_error:
-                    error_message = self._format_error_message(e)
-                    self.on_error(error_message, e)
+            # 运行事件循环
+            self.loop.run_forever()
 
         self.thread = threading.Thread(target=run_loop, daemon=True)
         self.thread.start()
 
         self.is_running = True
-        logger.info("翻译服务包装器已启动")
+        Out.status("翻译服务包装器已启动")
 
     def stop(self):
         """停止翻译服务（同步方法）"""
         if not self.is_running:
             return
 
-        try:
-            logger.info("正在停止翻译服务...")
-            self.is_running = False
+        Out.status("正在停止翻译服务...")
+        self.is_running = False
 
-            # 停止翻译服务
-            if self.service and self.loop:
-                try:
-                    future = asyncio.run_coroutine_threadsafe(self.service.stop(), self.loop)
-                    future.result(timeout=2)
-                except asyncio.TimeoutError:
-                    logger.warning("停止翻译服务超时，强制继续")
-                except Exception as e:
-                    logger.warning(f"停止翻译服务时出错: {e}")
+        # 1. 停止翻译服务并等待完成
+        if self.service and self.loop:
+            try:
+                future = asyncio.run_coroutine_threadsafe(self.service.stop(), self.loop)
+                future.result(timeout=3)  # 等待 stop() 完成，最多等待 3 秒
+                Out.debug("翻译服务已停止")
+            except Exception as e:
+                Out.warning(f"停止翻译服务时出错: {e}")
 
-            # 等待线程结束
-            if self.thread and self.thread.is_alive():
-                self.thread.join(timeout=3)
+        # 2. 取消所有剩余任务
+        if self.loop and self.loop.is_running():
+            try:
+                # 获取所有待处理的任务并取消
+                pending = asyncio.all_tasks(self.loop)
+                for task in pending:
+                    task.cancel()
+                Out.debug(f"已取消 {len(pending)} 个待处理任务")
+            except Exception as e:
+                Out.debug(f"取消任务时出错: {e}")
 
-            # 清理资源
-            self.service = None
-            self.thread = None
-            self.loop = None
+        # 3. 停止事件循环
+        if self.loop and self.loop.is_running():
+            self.loop.call_soon_threadsafe(self.loop.stop)
 
-            logger.info("翻译服务包装器已停止")
+        # 4. 等待线程结束
+        if self.thread and self.thread.is_alive():
+            self.thread.join(timeout=3)
+            if self.thread.is_alive():
+                Out.warning("翻译服务线程未能在 3 秒内结束")
 
-        except Exception as e:
-            logger.critical(f"停止翻译服务时发生错误: {e}", exc_info=True)
-            # 确保清理状态
-            self.is_running = False
-            self.service = None
-            self.thread = None
-            self.loop = None
+        # 5. 清理事件循环
+        if self.loop:
+            try:
+                # 确保事件循环已停止
+                if self.loop.is_running():
+                    self.loop.stop()
 
-    def _format_error_message(self, error: Exception) -> str:
-        """
-        格式化错误消息，提供用户友好的提示
+                # 关闭事件循环
+                if not self.loop.is_closed():
+                    self.loop.close()
+                    Out.debug("事件循环已关闭")
+            except Exception as e:
+                Out.debug(f"关闭事件循环时出错: {e}")
+            finally:
+                self.loop = None
 
-        Args:
-            error: 异常对象
+        # 6. 清理服务对象
+        self.service = None
+        self.thread = None
 
-        Returns:
-            用户友好的错误消息
-        """
-        error_str = str(error)
-        provider_name = self.provider or "aliyun"
-
-        # 检查是否是认证错误（HTTP 401）
-        if "401" in error_str or "unauthorized" in error_str.lower():
-            # 根据提供商给出具体的API Key环境变量名
-            if provider_name == "openai":
-                key_name = "OPENAI_API_KEY"
-                key_url = "https://platform.openai.com/api-keys"
-            elif provider_name == "aliyun" or provider_name == "alibaba":
-                key_name = "DASHSCOPE_API_KEY 或 ALIYUN_API_KEY"
-                key_url = "https://dashscope.console.aliyun.com/"
-            else:
-                key_name = f"{provider_name.upper()}_API_KEY"
-                key_url = ""
-
-            message = f"认证失败 (HTTP 401)：API Key 无效或未设置\n\n"
-            message += f"提供商: {provider_name}\n"
-            message += f"请检查 .env 文件中的 {key_name} 是否正确设置\n\n"
-            if key_url:
-                message += f"获取 API Key: {key_url}"
-
-            return message
-
-        # 检查是否是连接错误
-        elif "connection" in error_str.lower() or "timeout" in error_str.lower():
-            return f"连接失败：无法连接到 {provider_name} 服务\n\n请检查网络连接"
-
-        # 其他错误
-        else:
-            return f"服务启动失败\n\n提供商: {provider_name}\n错误: {error_str}"
+        Out.status("翻译服务包装器已停止")
 
     def send_audio_chunk(self, audio_data: bytes):
         """发送音频数据块（同步方法）"""
@@ -567,21 +470,10 @@ class MeetingTranslationServiceWrapper:
             return
 
         # 在事件循环中执行
-        try:
-            future = asyncio.run_coroutine_threadsafe(
-                self.service.send_audio_chunk(audio_data),
-                self.loop
-            )
-            # 添加错误处理回调（不等待结果，避免阻塞）
-            def handle_error(fut):
-                try:
-                    fut.exception()
-                except Exception as e:
-                    logger.error(f"发送音频数据时出错: {e}")
-
-            future.add_done_callback(handle_error)
-        except Exception as e:
-            logger.error(f"调度音频发送失败: {e}")
+        asyncio.run_coroutine_threadsafe(
+            self.service.send_audio_chunk(audio_data),
+            self.loop
+        )
 
 
 # 测试代码
@@ -602,10 +494,10 @@ if __name__ == "__main__":
         print("❌ 请设置 DASHSCOPE_API_KEY 或 ALIYUN_API_KEY 环境变量")
         exit(1)
 
-    # 翻译回调（测试用）
+    # 翻译回调
     def on_translation(source, target):
-        # 只在测试时打印，实际使用由 on_translation 回调处理
-        pass
+        print(f"\n[源] {source}")
+        print(f"[译] {target}")
 
     # 创建翻译服务
     service = MeetingTranslationServiceWrapper(

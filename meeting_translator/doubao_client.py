@@ -18,10 +18,10 @@ try:
 except ImportError:
     import pyaudio
 
-# 导入基础类和 mixins
+# 导入基础类（已包含 OutputMixin）
 from translation_client_base import BaseTranslationClient, TranslationProvider
-from client_output_mixin import OutputMixin
-from client_audio_mixin import AudioPlayerMixin
+# 导入统一的输出管理器
+from output_manager import Out
 
 # Add python_protogen to path for protobuf imports
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -41,13 +41,17 @@ except ImportError:
     Type = None
 
 
-class DoubaoClient(BaseTranslationClient, OutputMixin, AudioPlayerMixin):
+class DoubaoClient(BaseTranslationClient):
     """
     豆包 AST 客户端（语音克隆技术）
+    api文档 https://www.volcengine.com/docs/6561/1756902?lang=zh
 
     支持 S2S 和 S2T 两种模式：
     - S2S (audio_enabled=True): 语音输入 → 翻译 → 语音输出（克隆说话人音色）
     - S2T (audio_enabled=False): 语音输入 → 翻译 → 文本输出
+
+    继承自 BaseTranslationClient，已包含：
+    - OutputMixin: 统一的输出接口
 
     音色说明：
     - 使用语音克隆技术，自动复制说话人音色
@@ -71,6 +75,7 @@ class DoubaoClient(BaseTranslationClient, OutputMixin, AudioPlayerMixin):
     EVENT_AUDIO_START = 350        # 音频合成开始
     EVENT_AUDIO_DELTA = 352        # 音频增量
     EVENT_AUDIO_DONE = 351         # 音频完成
+    EVENT_AUDIO_MUTED = 250        # 静音事件
     EVENT_USAGE = 154              # 计费信息
 
     def __init__(
@@ -79,9 +84,8 @@ class DoubaoClient(BaseTranslationClient, OutputMixin, AudioPlayerMixin):
         source_language: str = "zh",
         target_language: str = "en",
         audio_enabled: bool = True,
-        glossary: Optional[Dict[str, str]] = None,
         access_token: Optional[str] = None,
-        **kwargs
+        **kwargs  # audio_queue, glossary 等通过 kwargs 传递给父类
     ):
         """
         初始化豆包翻译客户端
@@ -91,14 +95,11 @@ class DoubaoClient(BaseTranslationClient, OutputMixin, AudioPlayerMixin):
             source_language: 源语言 (zh/en/ja/ko/...)
             target_language: 目标语言 (en/zh/ja/ko/...)
             audio_enabled: 是否启用音频输出（True=S2S, False=S2T）
-            glossary: 词汇表字典（可选）
             access_token: 豆包 Access Token (doubao_access_token)
-            **kwargs: 其他参数
+            **kwargs: 其他参数（audio_queue, glossary 等传递给父类）
 
         Note:
             豆包使用语音克隆技术，自动复制说话人音色，因此没有 voice 参数。
-
-            glossary 应该由主程序加载后传入，client 只负责使用。
 
             依赖检查：需要安装 protobuf 库
             pip install protobuf
@@ -111,29 +112,17 @@ class DoubaoClient(BaseTranslationClient, OutputMixin, AudioPlayerMixin):
         if not api_key:
             raise ValueError("API key (doubao_app_id) cannot be empty.")
 
-        # 调用父类 __init__ (注意：不传 voice 参数)
-        super().__init__(
-            api_key=api_key,
-            source_language=source_language,
-            target_language=target_language,
-            voice=None,  # 豆包不支持选择音色（语音克隆）
-            audio_enabled=audio_enabled,
-            **kwargs
-        )
-
         # 豆包特定配置
         self.app_key = api_key  # doubao_app_id
         self.access_key = access_token  # doubao_access_token
-        self.ws_url = "wss://openspeech.bytedance.com/api/v4/ast/v2/translate"
-        self.resource_id = "volc.service_type.10053"
-
         self.ws = None
         self.session_id = None
 
-        # 词汇表（由主程序传入）
-        self.glossary = glossary or {}
-        if self.glossary:
-            self.output_debug(f"已加载词汇表，包含 {len(self.glossary)} 个术语")
+        # 验证认证信息（调试用）
+        if not self.app_key:
+            self.output_warning("豆包 APP ID 为空，可能导致认证失败")
+        if not self.access_key:
+            self.output_warning("豆包 Access Token 为空，可能导致认证失败")
 
         # 音频配置（16kHz）
         self._input_rate = self.AUDIO_RATE
@@ -141,8 +130,19 @@ class DoubaoClient(BaseTranslationClient, OutputMixin, AudioPlayerMixin):
         self._input_format = pyaudio.paInt16
         self._input_channels = 1
 
-        # PyAudio 实例
-        self._pyaudio_instance = pyaudio.PyAudio() if audio_enabled else None
+        # 调用父类 __init__
+        super().__init__(
+            api_key=api_key,
+            source_language=source_language,
+            target_language=target_language,
+            voice=None,  # 豆包不支持选择音色（语音克隆）
+            audio_enabled=audio_enabled,
+            **kwargs  # audio_queue, glossary 等通过 kwargs 传递
+        )
+
+        # 豆包 WebSocket 配置
+        self.ws_url = "wss://openspeech.bytedance.com/api/v4/ast/v2/translate"
+        self.resource_id = "volc.service_type.10053"
 
     @property
     def input_rate(self) -> int:
@@ -152,7 +152,7 @@ class DoubaoClient(BaseTranslationClient, OutputMixin, AudioPlayerMixin):
     @property
     def output_rate(self) -> int:
         """输出采样率（仅 S2S）"""
-        return 16000  # 豆包只支持 16000 或 48000
+        return 16000  # 豆包 PCM 格式使用 16000Hz（或 48000Hz）
 
     @classmethod
     def get_supported_voices(cls) -> Dict[str, str]:
@@ -201,6 +201,9 @@ class DoubaoClient(BaseTranslationClient, OutputMixin, AudioPlayerMixin):
         try:
             # 生成连接 ID
             conn_id = str(uuid.uuid4())
+
+            # 调试：打印认证信息
+            self.output_debug(f"豆包认证信息: app_key={self.app_key}, access_key={'*' * len(self.access_key) if self.access_key else 'None'}")
 
             # 构建请求头
             headers = Headers({
@@ -260,8 +263,8 @@ class DoubaoClient(BaseTranslationClient, OutputMixin, AudioPlayerMixin):
             # S2S 模式：override 为语音到语音
             if self.audio_enabled:
                 request.request.mode = "s2s"
-                request.target_audio.format = "pcm"  # PCM 格式直接播放
-                request.target_audio.rate = self.output_rate
+                request.target_audio.format = "pcm"  # PCM 格式（原始音频）
+                request.target_audio.rate = 16000  # 16000Hz 或 48000Hz
                 request.target_audio.bits = 16
                 request.target_audio.channel = 1
 
@@ -286,7 +289,9 @@ class DoubaoClient(BaseTranslationClient, OutputMixin, AudioPlayerMixin):
                 )
 
             mode_str = "S2S" if self.audio_enabled else "S2T"
-            self.output_debug(f"豆包会话已配置 (ID={self.session_id}, mode={mode_str})")
+            self.output_status(f"豆包会话已配置 (ID={self.session_id}, mode={mode_str})")
+            if self.audio_enabled:
+                self.output_status(f"豆包音频配置: rate=16000, format=PCM, bits=16, channel=1")
 
         except Exception as e:
             self.output_error(f"豆包会话配置失败: {e}", exc_info=True)
@@ -295,7 +300,8 @@ class DoubaoClient(BaseTranslationClient, OutputMixin, AudioPlayerMixin):
     async def send_audio_chunk(self, audio_data: bytes):
         """发送音频数据块"""
         if not self.is_connected or not self.ws:
-            self.output_warning("未连接，无法发送音频")
+            # 正常的时序问题：音频捕获线程先启动，但连接还在进行中
+            # 不输出 warning（避免误导用户）
             return
 
         try:
@@ -310,13 +316,6 @@ class DoubaoClient(BaseTranslationClient, OutputMixin, AudioPlayerMixin):
             self.output_error(f"发送音频块失败: {e}")
             self.is_connected = False
 
-    def start_audio_player(self):
-        """启动音频播放器（仅 S2S 模式）"""
-        if not self.audio_enabled:
-            return  # S2T 模式，不启动音频播放
-
-        super().start_audio_player()
-
     async def handle_server_messages(self, on_text_received=None):
         """处理服务器消息"""
         try:
@@ -326,43 +325,44 @@ class DoubaoClient(BaseTranslationClient, OutputMixin, AudioPlayerMixin):
                 response.ParseFromString(message)
                 event_type = response.event
 
-                # 源语言识别（ASR）
+                # 源语言识别（ASR）- 不输出（避免冗余）
                 if event_type == self.EVENT_ASR_DELTA:
-                    # 源语言增量识别
-                    source_text = response.text
-                    if source_text:
-                        self.output_debug(f"[源语言] {source_text}")
+                    pass
 
                 elif event_type == self.EVENT_ASR_DONE:
-                    # 源语言识别完成
-                    source_text = response.text
-                    if source_text:
-                        self.output_debug(f"[源语言完成] {source_text}")
-
-                # 翻译增量（跳过显示）
-                elif event_type == self.EVENT_TRANSLATE_DELTA:
-                    # 翻译增量文本（跳过，只显示最终结果）
                     pass
 
                 # 翻译完成
                 elif event_type == self.EVENT_TRANSLATE_DONE:
                     target_text = response.text
                     if target_text:
-                        self.output_translation(target_text, is_final=True)
-
+                        # 根据模式选择输出方式
+                        if self.audio_enabled:
+                            # S2S 模式：输出翻译到日志
+                            self.output_translation(target_text, extra_metadata={"provider": "doubao", "mode": "S2S"})
+                            
+                        else:
+                            # S2T 模式：输出字幕到窗口
+                            self.output_subtitle(
+                                target_text=target_text, 
+                                is_final=True, 
+                                extra_metadata={"provider": "doubao", "mode": "S2T"})
+                            
                 # 音频输出（仅 S2S）
-                elif event_type == self.EVENT_AUDIO_DELTA and self.audio_enabled:
-                    # 音频增量数据
-                    audio_data = response.target_audio.binary_data
-                    if audio_data:
-                        self.queue_audio(audio_data)
+                elif event_type == self.EVENT_AUDIO_DELTA:
+                    if self.audio_enabled:
+                        # 音频增量数据（豆包使用 response.data）
+                        audio_data = response.data
+                        if audio_data:
+                            self._queue_audio(audio_data)  # 放入外部队列
 
-                elif event_type == self.EVENT_AUDIO_DONE and self.audio_enabled:
-                    self.output_debug("音频输出完成")
+                elif event_type == self.EVENT_AUDIO_DONE:
+                    # 音频输出完成（不输出）
+                    pass
 
-                # 计费信息
+                # 计费信息（不输出）
                 elif event_type == self.EVENT_USAGE:
-                    self.output_debug(f"计费信息: {response}")
+                    pass
 
         except websockets.exceptions.ConnectionClosed:
             self.output_warning("WebSocket 连接已关闭")
@@ -376,9 +376,6 @@ class DoubaoClient(BaseTranslationClient, OutputMixin, AudioPlayerMixin):
         self.output_status("关闭连接...")
         self.is_connected = False
 
-        # 停止音频播放器
-        self.stop_audio_player()
-
         # 关闭 WebSocket
         if self.ws:
             try:
@@ -386,11 +383,3 @@ class DoubaoClient(BaseTranslationClient, OutputMixin, AudioPlayerMixin):
                 self.output_debug("WebSocket 已关闭")
             except Exception as e:
                 self.output_warning(f"关闭 WebSocket 时出错: {e}")
-
-        # 清理 PyAudio
-        if self._pyaudio_instance:
-            try:
-                self._pyaudio_instance.terminate()
-                self.output_debug("PyAudio 已终止")
-            except Exception as e:
-                self.output_warning(f"终止 PyAudio 时出错: {e}")

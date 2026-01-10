@@ -18,10 +18,10 @@ except ImportError:
 import queue
 import threading
 
-# 导入基础类和 mixins
+# 导入基础类（已包含 OutputMixin）
 from translation_client_base import BaseTranslationClient, TranslationProvider
-from client_output_mixin import OutputMixin
-from client_audio_mixin import AudioPlayerMixin
+# 导入统一的输出管理器
+from output_manager import Out
 
 try:
     from python_socks.async_.asyncio import Proxy
@@ -30,13 +30,16 @@ except ImportError:
     PROXY_AVAILABLE = False
 
 
-class OpenAIClient(BaseTranslationClient, OutputMixin, AudioPlayerMixin):
+class OpenAIClient(BaseTranslationClient):
     """
     OpenAI Realtime API 客户端
 
     支持 S2S 和 S2T 两种模式：
     - S2S (audio_enabled=True): 语音输入 → 翻译 → 语音输出
     - S2T (audio_enabled=False): 语音输入 → 翻译 → 文本输出
+
+    继承自 BaseTranslationClient，已包含：
+    - OutputMixin: 统一的输出接口
     """
 
     # 类属性，用于识别 provider
@@ -69,9 +72,8 @@ class OpenAIClient(BaseTranslationClient, OutputMixin, AudioPlayerMixin):
         target_language: str = "en",
         voice: Optional[str] = "marin",  # 推荐：marin 或 cedar（最佳质量）
         audio_enabled: bool = True,
-        glossary: Optional[Dict[str, str]] = None,
         model: str = "gpt-realtime-2025-08-28",
-        **kwargs
+        **kwargs  # audio_queue, glossary 等通过 kwargs 传递给父类
     ):
         """
         初始化 OpenAI 翻译客户端
@@ -84,39 +86,21 @@ class OpenAIClient(BaseTranslationClient, OutputMixin, AudioPlayerMixin):
                   推荐：marin 或 cedar (最佳质量)
                   可选：alloy/ash/ballad/coral/echo/sage/shimmer/verse
             audio_enabled: 是否启用音频输出（True=S2S, False=S2T）
-            glossary: 词汇表字典（可选）
             model: OpenAI Realtime 模型名称
-            **kwargs: 其他参数
+            **kwargs: 其他参数（audio_queue, glossary 等传递给父类）
 
         Note:
             音色选项参考：
             - https://platform.openai.com/docs/guides/realtime-conversations#voice-options
             - https://openai.com/index/introducing-gpt-realtime/ (Marin & Cedar 介绍)
-
-            glossary 应该由主程序加载后传入，client 只负责使用。
         """
         if not api_key:
             raise ValueError("API key cannot be empty.")
-
-        # 调用父类 __init__ (cooperative multiple inheritance)
-        super().__init__(
-            api_key=api_key,
-            source_language=source_language,
-            target_language=target_language,
-            voice=voice,
-            audio_enabled=audio_enabled,
-            **kwargs
-        )
 
         # OpenAI 特定配置
         self.model = model
         self.ws = None
         self.api_url = f"wss://api.openai.com/v1/realtime?model={model}"
-
-        # 词汇表（由主程序传入）
-        self.glossary = glossary or {}
-        if self.glossary:
-            self.output_debug(f"已加载词汇表，包含 {len(self.glossary)} 个术语")
 
         # 音频配置（OpenAI 使用 24kHz PCM16）
         self._input_rate = self.AUDIO_RATE
@@ -124,8 +108,15 @@ class OpenAIClient(BaseTranslationClient, OutputMixin, AudioPlayerMixin):
         self._input_format = pyaudio.paInt16
         self._input_channels = 1
 
-        # PyAudio 实例
-        self._pyaudio_instance = pyaudio.PyAudio()
+        # 调用父类 __init__
+        super().__init__(
+            api_key=api_key,
+            source_language=source_language,
+            target_language=target_language,
+            voice=voice,
+            audio_enabled=audio_enabled,
+            **kwargs  # audio_queue, glossary 等通过 kwargs 传递
+        )
 
     @property
     def input_rate(self) -> int:
@@ -206,7 +197,7 @@ class OpenAIClient(BaseTranslationClient, OutputMixin, AudioPlayerMixin):
                     "type": "server_vad",
                     "threshold": 0.5,
                     "prefix_padding_ms": 300,
-                    "silence_duration_ms": 800
+                    "silence_duration_ms": 300  # 减少到 300ms，更快响应
                 },
                 "temperature": 0.8,
                 "max_response_output_tokens": 4096
@@ -219,7 +210,6 @@ class OpenAIClient(BaseTranslationClient, OutputMixin, AudioPlayerMixin):
             config["session"]["voice"] = self.voice
             config["session"]["output_audio_format"] = "pcm16"
 
-        self.output_debug(f"会话配置完成 (模式: {'S2S' if self.audio_enabled else 'S2T'})")
         await self.ws.send(json.dumps(config))
 
     def _build_translation_instructions(self) -> str:
@@ -273,13 +263,6 @@ class OpenAIClient(BaseTranslationClient, OutputMixin, AudioPlayerMixin):
             self.output_error(f"发送音频块失败: {e}")
             self.is_connected = False
 
-    def start_audio_player(self):
-        """启动音频播放器（仅 S2S 模式）"""
-        if not self.audio_enabled:
-            return  # S2T 模式，不启动音频播放
-
-        super().start_audio_player()
-
     async def handle_server_messages(self, on_text_received=None):
         """处理服务器消息"""
         try:
@@ -289,71 +272,53 @@ class OpenAIClient(BaseTranslationClient, OutputMixin, AudioPlayerMixin):
                     event_type = event.get("type")
 
                     if event_type == "session.created":
-                        self.output_debug("会话已创建")
+                        pass
 
                     elif event_type == "session.updated":
-                        self.output_debug("会话已更新")
+                        pass
 
                     elif event_type == "response.audio.delta" and self.audio_enabled:
                         # 音频输出（仅 S2S）
                         audio_b64 = event.get("delta", "")
                         if audio_b64:
                             audio_data = base64.b64decode(audio_b64)
-                            self.queue_audio(audio_data)
+                            self._queue_audio(audio_data)  # 放入外部队列
 
                     elif event_type == "response.audio_transcript.delta":
                         # 翻译增量（S2S 模式）
-                        delta = event.get("delta", "")
-                        if delta:
-                            self.output_translation(delta, is_final=False)
-
+                        pass
+                        
                     elif event_type == "response.audio_transcript.done":
                         # 翻译完成（S2S 模式）
                         transcript = event.get("transcript", "")
-                        if transcript:
-                            self.output_translation(transcript, is_final=True)
+
+                        self.output_translation(transcript, extra_metadata={"provider": "openai", "mode": "S2S"})
 
                     elif event_type == "response.text.delta":
                         # 翻译增量（S2T 模式）
-                        delta = event.get("delta", "")
-                        if delta:
-                            self.output_translation(delta, is_final=False)
-
+                        pass
+                    
                     elif event_type == "response.text.done":
                         # 翻译完成（S2T 模式）
                         text = event.get("text", "")
-                        if text:
-                            self.output_translation(text, is_final=True)
+                        self.output_subtitle(
+                                target_text=text, 
+                                is_final=True, 
+                                extra_metadata={"provider": "openai", "mode": "S2T"})
 
                     elif event_type == "conversation.item.input_audio_transcription.completed":
                         # 源语言转录
-                        transcript = event.get("transcript", "")
-                        if not transcript:
-                            item = event.get("item", {})
-                            content = item.get("content", [])
-                            if content and len(content) > 0:
-                                transcript = content[0].get("transcript", "")
-
-                        if transcript:
-                            self.output_debug(f"[源语言] {transcript}")
+                        pass
 
                     elif event_type == "response.done":
-                        response = event.get("response", {})
-                        status = response.get("status", "")
-                        if status == "completed":
-                            self.output_debug("响应完成")
-
-                        usage = response.get("usage", {})
-                        if usage:
-                            total_tokens = usage.get("total_tokens", 0)
-                            if total_tokens > 0:
-                                self.output_debug(f"Token 使用: {total_tokens}")
+                        # 响应完成（不输出）
+                        pass
 
                     elif event_type == "input_audio_buffer.speech_started":
-                        self.output_debug("检测到语音")
+                        pass
 
                     elif event_type == "input_audio_buffer.speech_stopped":
-                        self.output_debug("语音结束")
+                        pass
 
                     elif event_type == "error":
                         error = event.get("error", {})
@@ -379,37 +344,10 @@ class OpenAIClient(BaseTranslationClient, OutputMixin, AudioPlayerMixin):
             self.output_error(f"消息处理错误: {e}", exc_info=True)
             self.is_connected = False
 
-    async def start_microphone_streaming(self):
-        """开始麦克风音频流式传输（示例方法）"""
-        stream = self._pyaudio_instance.open(
-            format=self._input_format,
-            channels=self._input_channels,
-            rate=self._input_rate,
-            input=True,
-            frames_per_buffer=self._input_chunk,
-        )
-
-        self.output_status("开始麦克风音频流式传输...")
-
-        try:
-            while self.is_connected:
-                try:
-                    audio_chunk = stream.read(self._input_chunk, exception_on_overflow=False)
-                    await self.send_audio_chunk(audio_chunk)
-                except Exception as e:
-                    self.output_error(f"读取麦克风数据失败: {e}")
-                    break
-        finally:
-            stream.stop_stream()
-            stream.close()
-
     async def close(self):
         """关闭连接并清理资源"""
         self.output_status("关闭连接...")
         self.is_connected = False
-
-        # 停止音频播放器
-        self.stop_audio_player()
 
         # 关闭 WebSocket
         if self.ws:
@@ -420,11 +358,3 @@ class OpenAIClient(BaseTranslationClient, OutputMixin, AudioPlayerMixin):
                 self.output_warning("WebSocket 关闭超时")
             except Exception as e:
                 self.output_warning(f"关闭 WebSocket 时出错: {e}")
-
-        # 清理 PyAudio
-        if self._pyaudio_instance:
-            try:
-                self._pyaudio_instance.terminate()
-                self.output_debug("PyAudio 已终止")
-            except Exception as e:
-                self.output_warning(f"终止 PyAudio 时出错: {e}")

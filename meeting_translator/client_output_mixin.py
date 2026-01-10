@@ -46,11 +46,10 @@ class OutputMixin:
             "provider": self._get_provider_name(),
             "source_language": getattr(self, 'source_language', 'zh'),
             "target_language": getattr(self, 'target_language', 'en'),
-            # audio_enabled 由 AudioPlayerMixin 设置，默认 False
             "audio_enabled": getattr(self, 'audio_enabled', False),
         }
 
-        # 添加音色信息（如果有，仅 S2S clients 会混入 AudioPlayerMixin）
+        # 添加音色信息（如果有）
         voice = getattr(self, 'voice', None)
         if voice:
             metadata["voice"] = voice
@@ -65,27 +64,43 @@ class OutputMixin:
         self,
         target_text: str,
         source_text: Optional[str] = None,
-        is_final: bool = True,
         extra_metadata: Optional[Dict[str, Any]] = None
     ):
         """
-        输出最终翻译结果
+        输出翻译结果
+        专用于S2S
 
         Args:
             target_text: 翻译后的文本
             source_text: 原文（可选）
-            is_final: 是否为最终结果（True=已finalize，False=增量）
             extra_metadata: 额外的 metadata
         """
         metadata = self._build_metadata(extra_metadata)
-        metadata["is_final"] = is_final
+        
+        Out.translation(target_text, source_text=source_text, metadata=metadata)
+        
+    def output_subtitle(
+        self,
+        target_text: str,
+        source_text: Optional[str] = None,
+        is_final: bool = True, 
+        predicted_text: Optional[str] = None,
+        extra_metadata: Optional[Dict[str, Any]] = None
+    ):
+        """
+        输出字幕
+        专用于S2S
 
-        if is_final:
-            Out.translation(target_text, source_text=source_text, metadata=metadata)
-        else:
-            # 增量翻译（用于实时显示）
-            Out.partial(target_text, mode="replace", source_text=source_text, metadata=metadata)
-
+        Args:
+            target_text: 翻译后的文本
+            source_text: 原文（可选）
+            is_final: 是否为最终结果（True=已finalize，False=过程量，可能被更新）
+            extra_metadata: 额外的 metadata
+        """
+        metadata = self._build_metadata(extra_metadata)
+        
+        Out.subtitle(target_text, source_text=source_text, is_final=is_final, predicted_text=predicted_text, metadata=metadata)
+        
     def output_status(self, message: str, extra_metadata: Optional[Dict[str, Any]] = None):
         """
         输出状态信息

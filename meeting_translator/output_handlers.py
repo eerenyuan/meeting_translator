@@ -31,14 +31,11 @@ class SubtitleHandler(BaseHandler, QObject):
             enabled_types: 启用的消息类型
         """
         BaseHandler.__init__(self, enabled_types=enabled_types or [
-            MessageType.TRANSLATION,
-            MessageType.PARTIAL_REPLACE,
-            MessageType.PARTIAL_APPEND
+            MessageType.SUBTITLE  # 只监听字幕消息
         ])
         QObject.__init__(self)  # 初始化 QObject
 
         self.subtitle_window = subtitle_window
-        self.current_partial_text = ""  # 当前增量文本（用于REPLACE模式）
 
         # 连接信号到槽（在主线程中执行 UI 更新）
         self._update_signal.connect(self._safe_update_subtitle)
@@ -48,34 +45,22 @@ class SubtitleHandler(BaseHandler, QObject):
         输出到字幕窗口（线程安全）
 
         Args:
-            message: 翻译消息
+            message: 翻译消息（必须是 SUBTITLE 类型）
         """
-        if message.message_type == MessageType.TRANSLATION:
-            # 最终翻译：添加到历史记录
-            self._update_signal.emit(
-                message.source_text or "",
-                message.target_text,
-                True,  # is_final
-                ""  # predicted_text (最终翻译不需要)
-            )
-            self.current_partial_text = ""  # 清空增量文本
+        if message.message_type != MessageType.SUBTITLE:
+            return
 
-        elif message.message_type in [MessageType.PARTIAL_REPLACE, MessageType.PARTIAL_APPEND]:
-            # 增量文本：临时显示
-            if message.incremental_mode == IncrementalMode.REPLACE:
-                # 替换模式（Qwen）：直接替换当前内容
-                self.current_partial_text = message.target_text
-            else:
-                # 追加模式：追加到末尾
-                self.current_partial_text += message.target_text
+        # 根据 is_final 判断是临时字幕还是最终字幕
+        # Client 已经处理了增量逻辑，发送的是全量文本
+        # predicted_text 只在临时字幕（is_final=False）时显示
+        predicted = message.predicted_text if not message.is_final else None
 
-            # 发射信号（线程安全）
-            self._update_signal.emit(
-                message.source_text or "",
-                self.current_partial_text,
-                False,  # is_final
-                message.predicted_text or ""  # 预测文本
-            )
+        self._update_signal.emit(
+            message.source_text or "",
+            message.target_text,  # 全量文本（Client 已处理增量）
+            message.is_final,     # True=最终字幕（换行）, False=临时字幕（可被替换）
+            predicted or ""       # 预测文本（Qwen API 的 stash 功能）
+        )
 
     def _safe_update_subtitle(self, source_text: str, target_text: str, is_final: bool, predicted_text: str):
         """
@@ -103,7 +88,8 @@ class ConsoleHandler(BaseHandler):
     """
 
     def __init__(self, enabled_types: Optional[List[MessageType]] = None,
-                 show_source: bool = True, show_metadata: bool = False):
+                 show_source: bool = True, show_metadata: bool = False,
+                 ignore_partial: bool = True):
         """
         初始化控制台处理器
 
@@ -111,10 +97,12 @@ class ConsoleHandler(BaseHandler):
             enabled_types: 启用的消息类型
             show_source: 是否显示源文本
             show_metadata: 是否显示元数据
+            ignore_partial: 是否忽略增量消息（is_final=False），默认 True
         """
         # 默认显示所有类型
         default_types = [
             MessageType.TRANSLATION,
+            MessageType.SUBTITLE,  # 也显示字幕
             MessageType.STATUS,
             MessageType.ERROR,
             MessageType.WARNING
@@ -123,6 +111,7 @@ class ConsoleHandler(BaseHandler):
 
         self.show_source = show_source
         self.show_metadata = show_metadata
+        self.ignore_partial = ignore_partial
 
     def emit(self, message: TranslationMessage):
         """
@@ -131,6 +120,11 @@ class ConsoleHandler(BaseHandler):
         Args:
             message: 翻译消息
         """
+        # 忽略增量消息（SUBTITLE 和 TRANSLATION）
+        # 只显示最终结果
+        if self.ignore_partial and not message.is_final:
+            return
+
         # 格式化输出
         output = self._format_message(message)
         if output:
@@ -139,22 +133,13 @@ class ConsoleHandler(BaseHandler):
     def _format_message(self, message: TranslationMessage) -> str:
         """格式化消息"""
         if message.message_type == MessageType.TRANSLATION:
-            # 翻译结果
+            # 翻译结果（S2S）
             provider = message.metadata.get("provider", "").upper()
-            mode = message.metadata.get("mode", "")  # LISTEN 或 SPEAK
+            mode = message.metadata.get("mode", "S2S")  # S2S 
             source = message.source_text or ""
 
-            # 构建前缀：[QWEN 听] 或 [QWEN 说]
-            if mode:
-                if mode == "LISTEN":
-                    mode_text = "听"
-                elif mode == "SPEAK":
-                    mode_text = "说"
-                else:
-                    mode_text = mode
-                prefix = f"[{provider} {mode_text}]"
-            else:
-                prefix = f"[{provider}]"
+            # 构建前缀
+            prefix = f"[{provider} {mode}]"
 
             # 构建完整消息
             if source:
@@ -162,21 +147,37 @@ class ConsoleHandler(BaseHandler):
             else:
                 return f"{prefix} {message.target_text}"
 
-        elif message.message_type in [MessageType.PARTIAL_REPLACE, MessageType.PARTIAL_APPEND]:
-            # 增量文本（通常不在控制台显示，除非DEBUG模式）
-            return f"[增量] {message.target_text}"
+        elif message.message_type == MessageType.SUBTITLE:
+            # 字幕翻译（S2T）
+            provider = message.metadata.get("provider", "").upper()
+            mode = message.metadata.get("mode", "S2T")
+            source = message.source_text or ""
+
+            # 构建前缀
+            prefix = f"[{provider} {mode}]"
+
+            # 是否有预测文本
+            predicted = message.predicted_text or ""
+
+            # 构建完整消息
+            if predicted:
+                return f"{prefix} {message.target_text} (预测: {predicted})"
+            elif source:
+                return f"{prefix} {source} → {message.target_text}"
+            else:
+                return f"{prefix} {message.target_text}"
 
         elif message.message_type == MessageType.STATUS:
             # 状态信息
-            return f"[状态] {message.target_text}"
+            return f"[STATUS] {message.target_text}"
 
         elif message.message_type == MessageType.ERROR:
             # 错误信息
-            return f"[错误] {message.target_text}"
+            return f"[ERROR] {message.target_text}"
 
         elif message.message_type == MessageType.WARNING:
             # 警告信息
-            return f"[警告] {message.target_text}"
+            return f"[WARNING] {message.target_text}"
 
         elif message.message_type == MessageType.USER_ALERT:
             # 用户提示（解析"标题|内容"格式）
@@ -194,30 +195,36 @@ class LogFileHandler(BaseHandler):
     """
     日志文件处理器
     将消息写入日志文件（使用Python logging）
+
+    注意：完全依赖 enabled_types 过滤，不使用 logging level
+    所有消息统一记录为 INFO 级别
     """
 
     def __init__(self, logger_name: str = __name__,
-                 enabled_types: Optional[List[MessageType]] = None):
+                 enabled_types: Optional[List[MessageType]] = None,
+                 ignore_partial: bool = True):
         """
         初始化日志文件处理器
 
         Args:
             logger_name: logger名称
             enabled_types: 启用的消息类型
+            ignore_partial: 是否忽略增量消息（is_final=False），默认 True
         """
-        # 默认记录完整信息（翻译结果 + 技术信息，不包含增量翻译）
+        # 默认记录完整信息（翻译结果 + 技术信息，包含 DEBUG）
         default_types = [
-            MessageType.TRANSLATION,  # ✅ 翻译结果（完整记录）
-            # ❌ 不包含 PARTIAL_REPLACE/PARTIAL_APPEND - 增量翻译不记录
-            MessageType.STATUS,       # ✅ 状态信息
-            MessageType.ERROR,        # ✅ 错误
-            MessageType.WARNING       # ✅ 警告
-            # ❌ 不包含 DEBUG - 调试信息默认不记录
+            MessageType.TRANSLATION,  # S2S 翻译结果（完整记录）
+            MessageType.SUBTITLE,     # S2T 字幕（完整记录）
+            MessageType.STATUS,       # 状态信息
+            MessageType.ERROR,        # 错误
+            MessageType.WARNING,      # 警告
+            MessageType.DEBUG         # 调试信息（详细 event JSON）
         ]
         super().__init__(enabled_types=enabled_types or default_types)
 
         self.logger_name = logger_name
         self.logger = logging.getLogger(logger_name)
+        self.ignore_partial = ignore_partial
 
     def emit(self, message: TranslationMessage):
         """
@@ -226,36 +233,40 @@ class LogFileHandler(BaseHandler):
         Args:
             message: 翻译消息
         """
-        # 映射MessageType到logging level
-        if message.message_type == MessageType.ERROR:
-            level = logging.ERROR
-        elif message.message_type == MessageType.WARNING:
-            level = logging.WARNING
-        elif message.message_type == MessageType.DEBUG:
-            level = logging.DEBUG
-        else:
-            level = logging.INFO
+        # 忽略增量消息（SUBTITLE 和 TRANSLATION）
+        # DEBUG 和 STATUS 总是记录
+        if self.ignore_partial and not message.is_final and message.message_type not in [MessageType.DEBUG, MessageType.STATUS]:
+            return
 
         # 格式化日志消息
         log_msg = self._format_log_message(message)
 
-        # 记录日志
-        self.logger.log(level, log_msg)
+        # 统一记录为 INFO 级别（完全依赖 enabled_types 过滤）
+        self.logger.info(log_msg)
 
     def _format_log_message(self, message: TranslationMessage) -> str:
         """格式化日志消息"""
-        parts = []
+        # 在消息前添加 MessageType 标记（替代 logging level）
+        type_prefix = f"[{message.message_type.value.upper()}]"
+
+        # STATUS/ERROR/WARNING/DEBUG 类型直接返回原文
+        if message.message_type in [MessageType.STATUS, MessageType.ERROR,
+                                    MessageType.WARNING, MessageType.DEBUG]:
+            return f"{type_prefix} {message.target_text}"
+
+        # TRANSLATION 和 SUBTITLE 类型添加 provider 标签
+        parts = [type_prefix]
 
         # 添加provider和模式标识
         provider = message.metadata.get("provider", "").upper()
-        mode = message.metadata.get("mode", "")  # LISTEN 或 SPEAK
+        mode = message.metadata.get("mode", "")  # S2S 或 S2T
 
         if provider:
             if mode:
-                if mode == "LISTEN":
-                    mode_text = "听"
-                elif mode == "SPEAK":
+                if mode == "S2S":
                     mode_text = "说"
+                elif mode == "S2T":
+                    mode_text = "听"
                 else:
                     mode_text = mode
                 parts.append(f"[{provider} {mode_text}]")
@@ -268,6 +279,10 @@ class LogFileHandler(BaseHandler):
 
         # 添加目标文本
         parts.append(message.target_text)
+
+        # 添加预测文本（仅 SUBTITLE）
+        if message.message_type == MessageType.SUBTITLE and message.predicted_text:
+            parts.append(f"(预测: {message.predicted_text})")
 
         return " ".join(parts)
 

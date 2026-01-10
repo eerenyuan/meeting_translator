@@ -4,14 +4,13 @@
 支持历史记录和滚动
 """
 
-from PyQt5.QtWidgets import QWidget, QVBoxLayout, QLabel, QSizeGrip, QTextEdit, QApplication
+from PyQt5.QtWidgets import QWidget, QVBoxLayout, QLabel, QSizeGrip, QTextEdit
 from PyQt5.QtCore import Qt, QPoint, QSize
 from PyQt5.QtGui import QFont, QColor, QPalette, QTextCursor
-import logging
 from datetime import datetime
 import os
 
-logger = logging.getLogger(__name__)
+from output_manager import Out
 
 
 class SubtitleWindow(QWidget):
@@ -34,7 +33,6 @@ class SubtitleWindow(QWidget):
         self.meeting_start_time = datetime.now()  # 记录会议开始时间
         self.subtitle_history = []  # 字幕历史记录
         self.current_partial_text = ""  # 当前正在显示的增量文本（未finalize）
-        self.current_predicted_text = ""  # 当前正在显示的预测文本（stash部分）
 
         # 初始化 UI
         self.init_ui()
@@ -102,8 +100,7 @@ class SubtitleWindow(QWidget):
 
         self.setLayout(layout)
 
-    def update_subtitle(self, source_text: str, target_text: str, is_final: bool = True,
-                       predicted_text: str = None):
+    def update_subtitle(self, source_text: str, target_text: str, is_final: bool = True,predicted_text: str = None):
         """
         更新字幕内容
 
@@ -122,21 +119,21 @@ class SubtitleWindow(QWidget):
             formatted_text = f"[{timestamp}] {target_text}"
             self.subtitle_history.append(formatted_text)
 
-            # 清空当前增量文本和预测文本
+            # 清空当前增量文本
             self.current_partial_text = ""
             self.current_predicted_text = ""
 
             # 重新渲染所有内容
             self._render_subtitles()
 
-            logger.debug(f"字幕已添加: {target_text}")
+            Out.debug(f"字幕已添加: {target_text}")
         else:
             # 增量文本：临时显示在最后一行
             self.current_partial_text = target_text
             self.current_predicted_text = predicted_text or ""  # 保存预测文本
             self._render_subtitles()
 
-            logger.debug(f"增量字幕: {target_text} (预测: {predicted_text or '无'})")
+            Out.debug(f"增量字幕: {target_text}")
 
     def _render_subtitles(self):
         """渲染所有字幕（历史记录 + 当前增量）"""
@@ -194,7 +191,7 @@ class SubtitleWindow(QWidget):
         self.current_predicted_text = ""
         self.subtitle_text.clear()
         self.meeting_start_time = datetime.now()  # 重置开始时间
-        logger.info("字幕已清空")
+        Out.status("字幕已清空")
 
     def save_subtitles(self, save_dir: str = ".") -> str:
         """
@@ -207,7 +204,7 @@ class SubtitleWindow(QWidget):
             str: 保存的文件路径
         """
         if not self.subtitle_history:
-            logger.warning("没有字幕内容可保存")
+            Out.warning("没有字幕内容可保存")
             return ""
 
         # 计算会议时长
@@ -230,10 +227,10 @@ class SubtitleWindow(QWidget):
                 for line in self.subtitle_history:
                     f.write(line + "\n\n")
 
-            logger.info(f"字幕已保存到: {filepath}")
+            Out.status(f"字幕已保存到: {filepath}")
             return filepath
         except Exception as e:
-            logger.error(f"保存字幕失败: {e}")
+            Out.error(f"保存字幕失败: {e}")
             return ""
 
     def get_subtitle_content(self) -> str:
@@ -256,14 +253,9 @@ class SubtitleWindow(QWidget):
     def mouseMoveEvent(self, event):
         """鼠标移动事件"""
         if event.buttons() == Qt.LeftButton and self.drag_position:
-            # 移动窗口（允许跨显示器拖动）
+            # 移动窗口
             self.move(event.globalPos() - self.drag_position)
             event.accept()
-
-    def moveEvent(self, event):
-        """窗口移动事件（处理跨显示器情况）"""
-        # 调用父类方法
-        super().moveEvent(event)
 
     def mouseReleaseEvent(self, event):
         """鼠标释放事件"""

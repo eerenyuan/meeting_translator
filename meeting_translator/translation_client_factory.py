@@ -7,9 +7,8 @@ from typing import Optional, Dict
 import os
 
 from translation_client_base import BaseTranslationClient, TranslationProvider
-from livetranslate_client import LiveTranslateClient
-from livetranslate_text_client import LiveTranslateTextClient
-from openai_realtime_client import OpenAIRealtimeClient
+from qwen_client import QwenClient
+from openai_client import OpenAIClient
 from doubao_client import DoubaoClient
 
 
@@ -24,7 +23,8 @@ class TranslationClientFactory:
         target_language: str = "en",
         voice: Optional[str] = None,
         audio_enabled: bool = True,
-        glossary_file: Optional[str] = None,
+        audio_queue: Optional[object] = None,
+        glossary: Optional[Dict[str, str]] = None,
         **kwargs
     ) -> BaseTranslationClient:
         """
@@ -35,9 +35,10 @@ class TranslationClientFactory:
             api_key: API key for the provider or None to load from env
             source_language: Source language code
             target_language: Target language code
-            voice: Voice selection (provider-specific)
-            audio_enabled: Whether to enable audio output
-            glossary_file: Path to glossary file
+            voice: Voice selection (provider-specific, only for S2S mode)
+            audio_enabled: Whether to enable audio output (S2S vs S2T)
+            audio_queue: External audio queue (AudioOutputThread.audio_queue)
+            glossary: Glossary dictionary (loaded by main program)
             **kwargs: Additional provider-specific parameters
 
         Returns:
@@ -57,39 +58,35 @@ class TranslationClientFactory:
         if api_key is None:
             api_key = TranslationClientFactory._get_api_key_for_provider(provider)
 
-        # Get default voice if not specified
-        if voice is None:
+        # Get default voice if not specified (only for S2S mode)
+        if voice is None and audio_enabled:
             voice = TranslationClientFactory._get_default_voice_for_provider(provider)
 
-        # Create client based on provider
+        # Create client based on provider (unified architecture: one class supports both S2S and S2T)
         if provider == "aliyun" or provider == "alibaba":
             # Support both "aliyun" and "alibaba" for backward compatibility
-            if audio_enabled:
-                return LiveTranslateClient(
-                    api_key=api_key,
-                    source_language=source_language,
-                    target_language=target_language,
-                    voice=voice,
-                    audio_enabled=audio_enabled,
-                    glossary_file=glossary_file
-                )
-            else:
-                return LiveTranslateTextClient(
-                    api_key=api_key,
-                    source_language=source_language,
-                    target_language=target_language,
-                    glossary_file=glossary_file
-                )
-
-        elif provider == "openai":
-            return OpenAIRealtimeClient(
+            # QwenClient: single class supports both S2S and S2T via audio_enabled flag
+            return QwenClient(
                 api_key=api_key,
                 source_language=source_language,
                 target_language=target_language,
                 voice=voice,
                 audio_enabled=audio_enabled,
-                glossary_file=glossary_file,
-                **kwargs
+                audio_queue=audio_queue,  # 传入外部队列
+                glossary=glossary  # 传入词汇表
+            )
+
+        elif provider == "openai":
+            # OpenAIClient: single class supports both S2S and S2T via audio_enabled flag
+            return OpenAIClient(
+                api_key=api_key,
+                source_language=source_language,
+                target_language=target_language,
+                voice=voice,
+                audio_enabled=audio_enabled,
+                audio_queue=audio_queue,  # 传入外部队列
+                glossary=glossary,  # 传入词汇表
+                **kwargs  # OpenAI 需要 model 参数
             )
 
         elif provider == "doubao":
@@ -98,15 +95,15 @@ class TranslationClientFactory:
             if not access_token:
                 raise ValueError("DOUBAO_ACCESS_TOKEN not found in environment")
 
+            # DoubaoClient: no voice parameter (uses voice cloning)
             return DoubaoClient(
                 api_key=api_key,  # doubao_app_id
                 source_language=source_language,
                 target_language=target_language,
-                voice=voice,
                 audio_enabled=audio_enabled,
-                glossary_file=glossary_file,
-                access_token=access_token,  # doubao_access_token
-                **kwargs
+                audio_queue=audio_queue,  # 传入外部队列
+                glossary=glossary,  # 传入词汇表
+                access_token=access_token  # doubao_access_token
             )
 
         else:
@@ -144,10 +141,10 @@ class TranslationClientFactory:
     def _get_default_voice_for_provider(provider: str) -> str:
         """Get default voice for given provider"""
         defaults = {
-            "aliyun": "Cherry",
-            "alibaba": "Cherry",
-            "openai": "alloy",
-            "doubao": "default",
+            "aliyun": "cherry",  # Qwen uses lowercase
+            "alibaba": "cherry",
+            "openai": "marin",  # OpenAI recommends marin or cedar
+            "doubao": "",  # Doubao doesn't support voice selection (voice cloning)
             "gemini": "en-US-Neural2-F",
             "elevenlabs": "EXAVITQu4vr4xnSDxMaL"  # Sarah
         }
@@ -167,14 +164,9 @@ class TranslationClientFactory:
         provider = provider.lower()
 
         if provider == "aliyun" or provider == "alibaba":
-            return {
-                "Cherry": "Cherry (Female)",
-                "Nofish": "Nofish (Male)",
-                "Bella": "Bella (Female)",
-                "Alice": "Alice (Female)"
-            }
+            return QwenClient.get_supported_voices()
         elif provider == "openai":
-            return OpenAIRealtimeClient.get_supported_voices()
+            return OpenAIClient.get_supported_voices()
         elif provider == "doubao":
             return DoubaoClient.get_supported_voices()
         else:

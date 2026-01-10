@@ -1,31 +1,26 @@
 """
-音频捕获线程（使用 PortAudio 回调模式）
+音频捕获线程
 从指定设备捕获音频并发送到翻译服务
-
-回调模式优势：
-- 非阻塞，PortAudio 底层驱动管理
-- 优雅退出，只需停止流即可
-- 避免线程竞争和阻塞问题
-- 生产环境推荐方案
 """
 
 import threading
-import queue
 try:
     # 优先使用 PyAudioWPatch (支持 WASAPI Loopback)
     import pyaudiowpatch as pyaudio
 except ImportError:
     # 如果没有安装 PyAudioWPatch，使用标准 PyAudio
     import pyaudio
+import asyncio
 import logging
 import audioop
+import numpy as np
 from typing import Callable, Optional
 
-logger = logging.getLogger(__name__)
+from output_manager import Out
 
 
 class AudioCaptureThread:
-    """音频捕获线程（使用回调模式）"""
+    """音频捕获线程"""
 
     def __init__(
         self,
@@ -55,9 +50,10 @@ class AudioCaptureThread:
         self.channels = channels
 
         # 根据采样率调整 chunk_size（保持 100ms 的缓冲时间）
+        # 如果 chunk_size 是默认值 1600（适用于 16kHz），则重新计算
         if chunk_size == 1600 and sample_rate != 16000:
             self.chunk_size = int(sample_rate * 0.1)  # 100ms
-            logger.debug(f"调整 chunk_size 为 {self.chunk_size} (100ms @ {sample_rate}Hz)")
+            Out.debug(f"调整 chunk_size 为 {self.chunk_size} (100ms @ {sample_rate}Hz)")
         else:
             self.chunk_size = chunk_size
 
@@ -70,155 +66,53 @@ class AudioCaptureThread:
         self.need_remix = (self.target_channels != self.channels)
 
         if self.need_resample or self.need_remix:
-            logger.info(f"音频转换: {self.sample_rate}Hz {self.channels}ch -> {self.target_sample_rate}Hz {self.target_channels}ch")
+            Out.status(f"音频转换: {self.sample_rate}Hz {self.channels}ch -> {self.target_sample_rate}Hz {self.target_channels}ch")
 
         self.is_running = False
+        self.thread = None
         self.pyaudio_instance = None
         self.stream = None
 
-        # 音频队列（用于回调线程到主线程的数据传递）
-        self.audio_queue = queue.Queue(maxsize=10)
-
-        # 处理线程（从队列取出音频数据并调用回调）
-        self.process_thread = None
-
-    def _audio_callback(self, in_data, frame_count, time_info, status):
-        """
-        PortAudio 回调函数（在 PortAudio 内部线程中调用）
-
-        这个函数是非阻塞的，必须快速返回
-        """
-        if status:
-            logger.debug(f"音频回调状态: {status}")
-
-        if not self.is_running:
-            # 停止回调，返回 paComplete
-            return (None, pyaudio.paComplete)
-
-        # 将音频数据放入队列（非阻塞）
-        try:
-            self.audio_queue.put_nowait(in_data)
-        except queue.Full:
-            # 队列满了，丢弃这一帧（避免阻塞）
-            pass
-
-        # 继续回调
-        return (None, pyaudio.paContinue)
-
-    def _process_loop(self):
-        """
-        音频处理循环（在独立线程中运行）
-        从队列取出音频数据，进行转换，然后调用回调
-        """
-        while self.is_running:
-            try:
-                # 从队列获取音频数据（带超时）
-                audio_data = self.audio_queue.get(timeout=0.1)
-
-                if audio_data is None:
-                    break
-
-                # 转换音频格式（重采样 + 混音）
-                if self.need_resample or self.need_remix:
-                    audio_data = self._convert_audio(audio_data)
-
-                # 调用外部回调
-                self.on_audio_chunk(audio_data)
-
-            except queue.Empty:
-                # 超时，继续
-                continue
-            except Exception as e:
-                logger.error(f"音频处理出错: {e}")
-                continue
-
-        logger.debug("音频处理循环已退出")
-
     def start(self):
-        """启动捕获（使用回调模式）"""
+        """启动捕获线程"""
         if self.is_running:
-            logger.warning("音频捕获线程已在运行")
+            Out.warning("音频捕获线程已在运行")
             return
 
         self.is_running = True
+        self.thread = threading.Thread(target=self._capture_loop, daemon=True)
+        self.thread.start()
 
-        # 创建 PyAudio 实例
-        self.pyaudio_instance = pyaudio.PyAudio()
-
-        # 打开音频流（使用回调模式）
-        self.stream = self.pyaudio_instance.open(
-            format=pyaudio.paInt16,
-            channels=self.channels,
-            rate=self.sample_rate,
-            input=True,
-            input_device_index=self.device_index,
-            frames_per_buffer=self.chunk_size,
-            stream_callback=self._audio_callback,  # 使用回调模式
-            start=False  # 不自动启动，等待显式启动
-        )
-
-        # 启动音频处理线程
-        self.process_thread = threading.Thread(target=self._process_loop, daemon=True)
-        self.process_thread.start()
-
-        # 启动流
-        self.stream.start_stream()
-
-        logger.info(f"音频捕获已启动（回调模式，设备: {self.device_index}, 采样率: {self.sample_rate} Hz)")
+        Out.status(f"音频捕获线程已启动 (设备: {self.device_index}, 采样率: {self.sample_rate} Hz)")
 
     def stop(self):
-        """停止捕获（回调模式安全退出）"""
+        """停止捕获线程"""
         if not self.is_running:
             return
 
-        logger.info("停止音频捕获...")
-
-        # 设置停止标志
+        Out.status("停止音频捕获线程...")
         self.is_running = False
 
-        # 停止流（PortAudio 会停止调用回调）
-        if self.stream is not None:
-            try:
-                if self.stream.is_active():
-                    self.stream.stop_stream()
-                    logger.debug("音频流已停止")
-            except Exception as e:
-                logger.warning(f"停止音频流时出错: {e}")
+        # 等待线程结束
+        if self.thread:
+            self.thread.join(timeout=2)
 
-        # 等待处理线程退出
-        if self.process_thread and self.process_thread.is_alive():
-            logger.debug("等待音频处理线程退出...")
-            self.process_thread.join(timeout=2)
-
-        # 关闭流（现在安全了，因为回调已经停止）
-        if self.stream is not None:
+        # 清理资源
+        if self.stream:
             try:
+                self.stream.stop_stream()
                 self.stream.close()
-                logger.debug("音频流已关闭")
+                Out.debug("音频流已关闭")
             except Exception as e:
-                logger.warning(f"关闭音频流时出错: {e}")
+                Out.debug(f"关闭音频流时出错: {e}")
 
-        # 终止 PyAudio
-        if self.pyaudio_instance is not None:
-            try:
-                self.pyaudio_instance.terminate()
-                logger.debug("PyAudio 实例已终止")
-            except Exception as e:
-                logger.warning(f"终止 PyAudio 时出错: {e}")
+        # 注意：不调用 terminate()，因为多个线程可能共享 PyAudio
+        # 让 Python GC 自动清理 PyAudio 实例
+        if self.pyaudio_instance:
+            Out.debug("PyAudio 实例将由 GC 清理（不调用 terminate）")
+            self.pyaudio_instance = None
 
-        # 清理引用
-        self.stream = None
-        self.pyaudio_instance = None
-        self.process_thread = None
-
-        # 清空队列
-        while not self.audio_queue.empty():
-            try:
-                self.audio_queue.get_nowait()
-            except queue.Empty:
-                break
-
-        logger.info("音频捕获已停止")
+        Out.status("音频捕获线程已停止")
 
     def _convert_audio(self, audio_data: bytes) -> bytes:
         """
@@ -231,8 +125,9 @@ class AudioCaptureThread:
             bytes: 转换后的音频数据
         """
         # 1. 混音：立体声转单声道
-        if self.need_remix and self.channels == 2:
-            audio_data = audioop.tomono(audio_data, 2, 1, 1)  # 左右声道平均
+        if self.need_remix and self.channels == 2 and self.target_channels == 1:
+            # 使用 audioop 将立体声转为单声道
+            audio_data = audioop.tomono(audio_data, 2, 0.5, 0.5)
 
         # 2. 重采样
         if self.need_resample:
@@ -247,3 +142,98 @@ class AudioCaptureThread:
             )
 
         return audio_data
+
+    def _capture_loop(self):
+        """音频捕获循环（在独立线程中运行）"""
+        try:
+            # 创建 PyAudio 实例
+            self.pyaudio_instance = pyaudio.PyAudio()
+
+            # 打开音频流
+            self.stream = self.pyaudio_instance.open(
+                format=pyaudio.paInt16,
+                channels=self.channels,
+                rate=self.sample_rate,
+                input=True,
+                input_device_index=self.device_index,
+                frames_per_buffer=self.chunk_size,
+                stream_callback=None  # 使用阻塞模式
+            )
+
+            Out.status("音频流已打开，开始捕获...")
+
+            # 持续读取音频数据
+            while self.is_running:
+                try:
+                    # 读取音频数据
+                    audio_data = self.stream.read(
+                        self.chunk_size,
+                        exception_on_overflow=False
+                    )
+
+                    # 转换音频格式（如果需要）
+                    if self.need_resample or self.need_remix:
+                        audio_data = self._convert_audio(audio_data)
+
+                    # 调用回调函数
+                    if self.on_audio_chunk:
+                        self.on_audio_chunk(audio_data)
+
+                except IOError as e:
+                    Out.debug(f"音频流读取错误: {e}")
+                    continue
+
+        except Exception as e:
+            Out.error(f"音频捕获线程错误: {e}")
+            import traceback
+            traceback.print_exc()
+
+        finally:
+            # 确保清理资源
+            if self.stream:
+                try:
+                    self.stream.stop_stream()
+                    self.stream.close()
+                except:
+                    pass
+
+            if self.pyaudio_instance:
+                try:
+                    self.pyaudio_instance.terminate()
+                except:
+                    pass
+
+
+# 测试代码
+if __name__ == "__main__":
+    import time
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s [%(levelname)s] %(message)s'
+    )
+
+    # 回调函数：打印音频数据大小
+    def on_audio(data: bytes):
+        print(f"收到音频数据: {len(data)} 字节")
+
+    # 创建音频捕获线程（使用默认设备）
+    capture = AudioCaptureThread(
+        device_index=None,  # 使用默认设备
+        on_audio_chunk=on_audio
+    )
+
+    try:
+        # 启动捕获
+        capture.start()
+
+        # 运行10秒
+        print("音频捕获中...按 Ctrl+C 停止")
+        time.sleep(10)
+
+    except KeyboardInterrupt:
+        print("\n用户中断")
+
+    finally:
+        # 停止捕获
+        capture.stop()

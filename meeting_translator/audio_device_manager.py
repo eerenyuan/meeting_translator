@@ -3,6 +3,10 @@
 列出所有可用的音频输入/输出设备
 """
 
+import sys
+import re
+from typing import List, Dict, Set
+
 try:
     # 优先使用 PyAudioWPatch (支持 WASAPI Loopback)
     import pyaudiowpatch as pyaudio
@@ -10,22 +14,111 @@ except ImportError:
     # 如果没有安装 PyAudioWPatch，使用标准 PyAudio
     import pyaudio
 
-import logging
-import platform
-from typing import List, Dict
-
-logger = logging.getLogger(__name__)
+from output_manager import Out
 
 
 class AudioDeviceManager:
     """音频设备管理器"""
 
+    # Host API 优先级
+    API_PRIORITY = {
+        'Windows WASAPI': 4,
+        'WASAPI': 4,
+        'Windows WDM-KS': 3,
+        'MME': 2,
+        'Windows DirectSound': 1,
+        'DirectSound': 1
+    }
+
     def __init__(self):
         self.pyaudio_instance = pyaudio.PyAudio()
 
-    def get_input_devices(self) -> List[Dict]:
+    def _normalize_device_name(self, device_name: str) -> str:
+        """
+        规范化设备名称，用于去重比较
+
+        处理以下情况：
+        1. VB-Audio 设备名称可能被截断（如 "Voicemeeter In 3 (VB-Audio Voi"）
+        2. 去除括号内容（如 "(VB-Audio Voicemeeter VAIO)"）
+        """
+        if not device_name:
+            return ""
+
+        # 对于 VB-Audio 设备，去除括号及内容
+        if 'VB-Audio' in device_name or 'VB-AUDIO' in device_name.upper():
+            # 匹配括号前的内容
+            match = re.match(r'^([^(]+)', device_name)
+            if match:
+                normalized = match.group(1).strip()
+                # 特殊处理：保留 Voicemeeter Input 等关键信息
+                # 例如："Voicemeeter Input " → "Voicemeeter Input"
+                return normalized.rstrip()
+
+        return device_name.strip()
+
+    def _get_api_priority(self, host_api: str) -> int:
+        """获取 Host API 的优先级"""
+        if not host_api:
+            return 0
+        return self.API_PRIORITY.get(host_api, 0)
+
+    def _deduplicate_devices(self, devices: List[Dict]) -> List[Dict]:
+        """
+        去重设备列表，优先保留高优先级 API 的设备
+
+        Args:
+            devices: 原始设备列表
+
+        Returns:
+            去重后的设备列表
+        """
+        # 按规范化名称分组
+        device_groups: Dict[str, List[Dict]] = {}
+
+        for device in devices:
+            normalized_name = self._normalize_device_name(device['name'])
+
+            if normalized_name not in device_groups:
+                device_groups[normalized_name] = []
+            device_groups[normalized_name].append(device)
+
+        # 每组保留最高优先级的设备
+        deduplicated = []
+
+        for group_name, group_devices in device_groups.items():
+            # 按优先级排序（降序）
+            sorted_devices = sorted(
+                group_devices,
+                key=lambda d: (
+                    self._get_api_priority(d.get('host_api', '')),
+                    -d.get('sample_rate', 0)  # 采样率作为次要排序
+                ),
+                reverse=True
+            )
+
+            # 保留第一个（最高优先级）
+            best_device = sorted_devices[0]
+
+            # 记录被去重的设备（用于调试）
+            if len(sorted_devices) > 1:
+                removed_apis = [d.get('host_api', 'Unknown') for d in sorted_devices[1:]]
+                Out.debug(
+                    f"设备 '{best_device['name']}' 去重: "
+                    f"保留 {best_device.get('host_api')}, "
+                    f"移除 {', '.join(removed_apis)}"
+                )
+
+            deduplicated.append(best_device)
+
+        return deduplicated
+
+    def get_input_devices(self, include_voicemeeter: bool = True, deduplicate: bool = True) -> List[Dict]:
         """
         获取所有输入设备（麦克风 + WASAPI Loopback）
+
+        Args:
+            include_voicemeeter: 是否包含 Voicemeeter 设备
+            deduplicate: 是否去重（默认 True）
 
         Returns:
             List[Dict]: 设备列表，每个设备包含 index, name, channels, sample_rate, is_loopback, host_api
@@ -33,14 +126,13 @@ class AudioDeviceManager:
         devices = []
         device_count = self.pyaudio_instance.get_device_count()
 
-        # 获取 WASAPI host API 索引 (仅在 Windows 上)
+        # 获取 WASAPI host API 索引
         wasapi_index = None
-        if platform.system() == "Windows":
-            try:
-                wasapi_info = self.pyaudio_instance.get_host_api_info_by_type(pyaudio.paWASAPI)
-                wasapi_index = wasapi_info['index']
-            except Exception as e:
-                logger.warning(f"WASAPI 不可用: {e}")
+        try:
+            wasapi_info = self.pyaudio_instance.get_host_api_info_by_type(pyaudio.paWASAPI)
+            wasapi_index = wasapi_info['index']
+        except Exception as e:
+            Out.warning(f"WASAPI 不可用: {e}")
 
         for i in range(device_count):
             try:
@@ -51,6 +143,10 @@ class AudioDeviceManager:
                     device_name = device_info['name']
                     host_api_index = device_info['hostApi']
 
+                    # 过滤 Voicemeeter 设备
+                    if not include_voicemeeter and 'voicemeeter' in device_name.lower():
+                        continue
+
                     # 优先使用 WASAPI 的 isLoopbackDevice 标记
                     is_wasapi_loopback = False
                     if wasapi_index is not None and host_api_index == wasapi_index:
@@ -60,7 +156,7 @@ class AudioDeviceManager:
                     is_legacy_loopback = any([
                         'Stereo Mix' in device_name,           # 英文：立体声混音
                         '立体声混音' in device_name,             # 中文：立体声混音
-                        'CABLE Output' in device_name,         # 虚拟音频设备 Output端
+                        'CABLE Output' in device_name,         # VB-Cable Output端
                         'VoiceMeeter' in device_name and 'Out' in device_name,  # VoiceMeeter Output
                         '主声音捕获' in device_name,             # 中文：主声音捕获驱动程序
                         'Wave Out Mix' in device_name,         # 某些声卡的混音设备
@@ -79,9 +175,13 @@ class AudioDeviceManager:
                     except:
                         pass
 
+                    # 添加显示名称（包含 host api）
+                    display_name = f"{device_name} ({host_api_name})"
+
                     devices.append({
                         'index': i,
                         'name': device_name,
+                        'display_name': display_name,
                         'channels': device_info['maxInputChannels'],
                         'sample_rate': int(device_info['defaultSampleRate']),
                         'is_loopback': is_loopback,
@@ -90,14 +190,22 @@ class AudioDeviceManager:
                         'host_api_index': host_api_index
                     })
             except Exception as e:
-                logger.debug(f"无法获取设备 {i} 的信息: {e}")
+                Out.debug(f"无法获取设备 {i} 的信息: {e}")
                 continue
+
+        # 去重
+        if deduplicate:
+            devices = self._deduplicate_devices(devices)
 
         return devices
 
-    def get_output_devices(self) -> List[Dict]:
+    def get_output_devices(self, include_voicemeeter: bool = True, deduplicate: bool = True) -> List[Dict]:
         """
         获取所有输出设备（扬声器）
+
+        Args:
+            include_voicemeeter: 是否包含 Voicemeeter 设备
+            deduplicate: 是否去重（默认 True）
 
         Returns:
             List[Dict]: 设备列表
@@ -111,17 +219,42 @@ class AudioDeviceManager:
 
                 # 只返回输出设备
                 if device_info['maxOutputChannels'] > 0:
+                    device_name = device_info['name']
+
+                    # 过滤 Voicemeeter 设备
+                    if not include_voicemeeter and 'voicemeeter' in device_name.lower():
+                        continue
+
+                    # 获取 Host API 名称
+                    host_api_name = "Unknown"
+                    try:
+                        host_api_info = self.pyaudio_instance.get_host_api_info_by_index(device_info['hostApi'])
+                        host_api_name = host_api_info['name']
+                    except:
+                        pass
+
+                    # 添加显示名称（包含 host api）
+                    display_name = f"{device_name} ({host_api_name})"
+
+                    # 判断是否为虚拟设备（Voicemeeter 系列）
+                    is_virtual = 'voicemeeter' in device_name.lower()
+
                     devices.append({
                         'index': i,
-                        'name': device_info['name'],
+                        'name': device_name,
+                        'display_name': display_name,
                         'channels': device_info['maxOutputChannels'],
                         'sample_rate': int(device_info['defaultSampleRate']),
-                        'is_virtual': 'CABLE Input' in device_info['name'] or
-                                    'VoiceMeeter' in device_info['name']
+                        'host_api': host_api_name,
+                        'is_virtual': is_virtual
                     })
             except Exception as e:
-                logger.debug(f"无法获取设备 {i} 的信息: {e}")
+                Out.debug(f"无法获取设备 {i} 的信息: {e}")
                 continue
+
+        # 去重
+        if deduplicate:
+            devices = self._deduplicate_devices(devices)
 
         return devices
 
@@ -136,7 +269,7 @@ class AudioDeviceManager:
                 'sample_rate': int(default_info['defaultSampleRate'])
             }
         except Exception as e:
-            logger.error(f"无法获取默认输入设备: {e}")
+            Out.error(f"无法获取默认输入设备: {e}")
             return None
 
     def get_default_output_device(self) -> Dict:
@@ -150,8 +283,67 @@ class AudioDeviceManager:
                 'sample_rate': int(default_info['defaultSampleRate'])
             }
         except Exception as e:
-            logger.error(f"无法获取默认输出设备: {e}")
+            Out.error(f"无法获取默认输出设备: {e}")
             return None
+
+    def get_real_microphones(self) -> List[Dict]:
+        """
+        获取真实麦克风设备（用于 s2s 采集）
+
+        过滤条件：
+        - 非虚拟设备（排除 Voicemeeter）
+        - 非 loopback 设备
+
+        Returns:
+            真实麦克风设备列表
+        """
+        all_devices = self.get_input_devices(include_voicemeeter=False, deduplicate=True)
+
+        # 过滤掉 loopback 设备
+        real_microphones = [
+            device for device in all_devices
+            if not device.get('is_loopback', False)
+        ]
+
+        return real_microphones
+
+    def get_real_speakers(self) -> List[Dict]:
+        """
+        获取真实扬声器/loopback 设备（用于 s2t 采集）
+
+        只返回 loopback 设备（用于捕获系统音频）
+
+        Returns:
+            真实 loopback 设备列表
+        """
+        all_devices = self.get_input_devices(include_voicemeeter=False, deduplicate=True)
+
+        # 只保留 loopback 设备
+        real_speakers = [
+            device for device in all_devices
+            if device.get('is_loopback', False)
+        ]
+
+        return real_speakers
+
+    def get_virtual_outputs(self) -> List[Dict]:
+        """
+        获取虚拟输出设备（用于 s2s 输出）
+
+        只返回 Voicemeeter 输出设备
+
+        Returns:
+            Voicemeeter 虚拟输出设备列表
+        """
+        all_devices = self.get_output_devices(include_voicemeeter=True, deduplicate=True)
+
+        # 只返回虚拟设备（Voicemeeter Input, AUX Input 等）
+        virtual_outputs = [
+            device for device in all_devices
+            if device.get('is_virtual', False)
+        ]
+
+        return virtual_outputs
 
     def find_device_by_name(self, name_pattern: str, is_input: bool = True) -> Dict:
         """
@@ -168,10 +360,10 @@ class AudioDeviceManager:
 
         for device in devices:
             if name_pattern.lower() in device['name'].lower():
-                logger.info(f"找到设备: {device['name']}")
+                Out.status(f"找到设备: {device['name']}")
                 return device
 
-        logger.warning(f"未找到包含 '{name_pattern}' 的设备")
+        Out.warning(f"未找到包含 '{name_pattern}' 的设备")
         return None
 
     def print_all_devices(self):
@@ -181,27 +373,24 @@ class AudioDeviceManager:
         print("="*80)
         for device in self.get_input_devices():
             mark = " [LOOPBACK]" if device.get('is_loopback') else ""
-            print(f"[{device['index']}] {device['name']}{mark}")
-            print(f"    声道: {device['channels']}, 采样率: {device['sample_rate']} Hz")
+            print(f"[{device['index']}] {device.get('display_name', device['name'])}{mark}")
+            print(f"    声道: {device['channels']}, 采样率: {device['sample_rate']} Hz, API: {device.get('host_api', 'N/A')}")
 
         print("\n" + "="*80)
         print("音频输出设备:")
         print("="*80)
         for device in self.get_output_devices():
             mark = " [VIRTUAL]" if device.get('is_virtual') else ""
-            print(f"[{device['index']}] {device['name']}{mark}")
-            print(f"    声道: {device['channels']}, 采样率: {device['sample_rate']} Hz")
+            print(f"[{device['index']}] {device.get('display_name', device['name'])}{mark}")
+            print(f"    声道: {device['channels']}, 采样率: {device['sample_rate']} Hz, API: {device.get('host_api', 'N/A')}")
 
         print("\n" + "="*80)
 
     def refresh(self):
         """
         刷新设备列表
-
         重新创建 PyAudio 实例以获取最新的设备列表。
         用于检测新连接的音频设备（如蓝牙耳机、USB 麦克风等）。
-
-        注意：调用后，旧的 PyAudio 实例会被 terminate。
         """
         try:
             # 终止旧的 PyAudio 实例
@@ -210,8 +399,9 @@ class AudioDeviceManager:
 
             # 创建新的 PyAudio 实例
             self.pyaudio_instance = pyaudio.PyAudio()
+            Out.status("设备列表已刷新")
         except Exception as e:
-            logger.error(f"刷新设备列表失败: {e}")
+            Out.error(f"刷新设备列表失败: {e}")
             raise
 
     def cleanup(self):
@@ -234,8 +424,8 @@ if __name__ == "__main__":
     if voicemeeter:
         print(f"\n找到 VoiceMeeter: {voicemeeter}")
 
-    cable_output = manager.find_device_by_name("CABLE Output")
-    if cable_output:
-        print(f"\n找到虚拟音频设备: {cable_output}")
+    vb_cable = manager.find_device_by_name("CABLE Output")
+    if vb_cable:
+        print(f"\n找到 VB-Cable: {vb_cable}")
 
     manager.cleanup()

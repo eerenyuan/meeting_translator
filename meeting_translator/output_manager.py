@@ -17,11 +17,9 @@ logger = logging.getLogger(__name__)
 class MessageType(Enum):
     """消息类型（类似LogLevel）"""
 
-    # 文本相关
-    SOURCE_TEXT = "source"           # 源语言文本识别
-    TRANSLATION = "translation"      # 最终翻译结果
-    PARTIAL_APPEND = "partial_append"  # 增量文本（追加模式）
-    PARTIAL_REPLACE = "partial_replace"  # 增量文本（替换模式，如Qwen）
+    # 翻译相关
+    SUBTITLE = "subtitle"            # S2T 字幕翻译（显示在字幕窗口 + log + console）
+    TRANSLATION = "translation"      # S2S 翻译（只输出到 log + console，不显示字幕）
 
     # 状态相关
     STATUS = "status"                # 状态信息（连接、断开、启动、停止等）
@@ -165,6 +163,17 @@ class OutputManager:
         self.handlers: List[BaseHandler] = []
         self.enabled = True  # 全局开关
 
+        # 添加临时的控制台处理器（显示所有消息）
+        # 这确保在 _init_output_manager() 调用之前，Out.xxx() 调用也能输出
+        # 后续 _init_output_manager() 会清空并替换为完整的配置
+        try:
+            from output_handlers import ConsoleHandler
+            temp_console = ConsoleHandler()  # 默认显示所有类型
+            self.add_handler(temp_console)
+        except Exception as e:
+            # 如果导入失败，至少不会崩溃
+            logger.warning(f"无法添加临时 ConsoleHandler: {e}")
+
     @classmethod
     def get_instance(cls) -> 'OutputManager':
         """获取单例实例"""
@@ -215,7 +224,7 @@ class OutputManager:
     def translation(self, target_text: str, source_text: Optional[str] = None,
                    metadata: Dict[str, Any] = None):
         """
-        发送最终翻译结果
+        发送最终翻译结果（S2S 模式或通用翻译）
 
         Args:
             target_text: 目标文本
@@ -231,28 +240,32 @@ class OutputManager:
         )
         self.emit(message)
 
-    def partial(self, target_text: str, mode: IncrementalMode = IncrementalMode.REPLACE,
-                source_text: Optional[str] = None, predicted_text: Optional[str] = None,
-                metadata: Dict[str, Any] = None):
+    def subtitle(self, target_text: str, source_text: Optional[str] = None,
+                 is_final: bool = True, predicted_text: Optional[str] = None,
+                 metadata: Dict[str, Any] = None):
         """
-        发送增量翻译结果
+        发送字幕翻译结果（S2T 模式）
+
+        字幕会显示在字幕窗口、控制台和日志文件中。
 
         Args:
-            target_text: 目标文本（已确定部分）
-            mode: 增量模式（APPEND或REPLACE）
+            target_text: 目标文本（字幕内容）
             source_text: 源文本（可选）
-            predicted_text: 预测文本（Qwen API的stash，可选）
+            is_final: 是否为最终字幕（False=临时字幕，可被替换；True=最终字幕，换行显示）
+            predicted_text: 预测文本（Qwen API 的 stash 字段，可选）
             metadata: 元数据
         """
-        msg_type = MessageType.PARTIAL_APPEND if mode == IncrementalMode.APPEND else MessageType.PARTIAL_REPLACE
+        # 处理 metadata，从中提取 predicted_text（如果存在）
+        final_metadata = metadata or {}
+        final_predicted = predicted_text or final_metadata.pop('predicted_text', None)
+
         message = TranslationMessage(
-            message_type=msg_type,
+            message_type=MessageType.SUBTITLE,
             target_text=target_text,
             source_text=source_text,
-            predicted_text=predicted_text,  # 支持Qwen的预测文本
-            is_final=False,
-            incremental_mode=mode,
-            metadata=metadata or {}
+            is_final=is_final,
+            predicted_text=final_predicted,
+            metadata=final_metadata
         )
         self.emit(message)
 
@@ -285,7 +298,8 @@ class OutputManager:
         final_message = message
         if exc_info:
             # 附加堆栈信息
-            traceback_str = ''.join(traceback.format_exception(*metadata.get('exc_info', None) if metadata.get('exc_info') else sys.exc_info()))
+            exc_info_data = (metadata.get('exc_info') if metadata else None) or sys.exc_info()
+            traceback_str = ''.join(traceback.format_exception(*exc_info_data))
             if traceback_str:
                 final_message = f"{message}\n{traceback_str}"
 
