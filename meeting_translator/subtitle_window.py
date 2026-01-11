@@ -4,7 +4,7 @@
 支持历史记录和滚动
 """
 
-from PyQt5.QtWidgets import QWidget, QVBoxLayout, QLabel, QSizeGrip, QTextEdit
+from PyQt5.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QSizeGrip, QTextEdit, QPushButton
 from PyQt5.QtCore import Qt, QPoint, QSize
 from PyQt5.QtGui import QFont, QColor, QPalette, QTextCursor
 from datetime import datetime
@@ -39,6 +39,11 @@ class SubtitleWindow(QWidget):
         self.current_partial_text = ""  # 当前正在显示的增量文本（未finalize）
         self.current_source_text = ""  # 当前正在显示的源文本（英文）
 
+        # 字体大小设置
+        self.font_size = 20  # 默认字体大小
+        self.min_font_size = 12  # 最小字体大小
+        self.max_font_size = 48  # 最大字体大小
+
         # 初始化 UI
         self.init_ui()
 
@@ -58,7 +63,7 @@ class SubtitleWindow(QWidget):
 
         # 字幕文本框（支持滚动和历史记录）
         self.subtitle_text = QTextEdit()
-        self.subtitle_text.setFont(QFont("Microsoft YaHei", 20, QFont.Bold))  # 增大字体
+        self.subtitle_text.setFont(QFont("Microsoft YaHei", self.font_size, QFont.Bold))  # 使用变量控制的字体大小
         self.subtitle_text.setReadOnly(True)  # 只读
         # 允许文本选择和复制 (类似浏览器行为，但不可编辑)
         self.subtitle_text.setTextInteractionFlags(Qt.TextBrowserInteraction)
@@ -87,6 +92,59 @@ class SubtitleWindow(QWidget):
         self.subtitle_text.setPlaceholderText("等待翻译...")
         layout.addWidget(self.subtitle_text)
 
+        # 控制栏（右下角）：字体大小按钮 + 缩放手柄
+        control_bar = QHBoxLayout()
+        control_bar.setSpacing(8)
+
+        # 添加弹性空间，把控件推到右边
+        control_bar.addStretch()
+
+        # 字体减小按钮
+        self.font_decrease_btn = QPushButton("A-")
+        self.font_decrease_btn.setFixedSize(40, 30)
+        self.font_decrease_btn.setToolTip("减小字体")
+        self.font_decrease_btn.setStyleSheet("""
+            QPushButton {
+                background-color: rgba(100, 150, 255, 150);
+                border: 2px solid rgba(255, 255, 255, 180);
+                border-radius: 5px;
+                color: white;
+                font-weight: bold;
+                font-size: 14px;
+            }
+            QPushButton:hover {
+                background-color: rgba(120, 170, 255, 200);
+            }
+            QPushButton:pressed {
+                background-color: rgba(80, 130, 235, 180);
+            }
+        """)
+        self.font_decrease_btn.clicked.connect(self.decrease_font_size)
+        control_bar.addWidget(self.font_decrease_btn)
+
+        # 字体增大按钮
+        self.font_increase_btn = QPushButton("A+")
+        self.font_increase_btn.setFixedSize(40, 30)
+        self.font_increase_btn.setToolTip("增大字体")
+        self.font_increase_btn.setStyleSheet("""
+            QPushButton {
+                background-color: rgba(100, 150, 255, 150);
+                border: 2px solid rgba(255, 255, 255, 180);
+                border-radius: 5px;
+                color: white;
+                font-weight: bold;
+                font-size: 14px;
+            }
+            QPushButton:hover {
+                background-color: rgba(120, 170, 255, 200);
+            }
+            QPushButton:pressed {
+                background-color: rgba(80, 130, 235, 180);
+            }
+        """)
+        self.font_increase_btn.clicked.connect(self.increase_font_size)
+        control_bar.addWidget(self.font_increase_btn)
+
         # 添加缩放手柄（更大、更明显）
         self.size_grip = QSizeGrip(self)
         self.size_grip.setFixedSize(30, 30)  # 增大手柄 20x20 -> 30x30
@@ -100,9 +158,10 @@ class SubtitleWindow(QWidget):
                 background-color: rgba(120, 170, 255, 200);
             }
         """)
+        control_bar.addWidget(self.size_grip)
 
-        # 手柄布局（右下角）
-        layout.addWidget(self.size_grip, 0, Qt.AlignRight | Qt.AlignBottom)
+        # 控制栏布局（右下角对齐）
+        layout.addLayout(control_bar)
 
         self.setLayout(layout)
 
@@ -224,6 +283,29 @@ class SubtitleWindow(QWidget):
                 .replace('>', '&gt;')
                 .replace('"', '&quot;')
                 .replace("'", '&#39;'))
+
+    def increase_font_size(self):
+        """增大字体大小"""
+        if self.font_size < self.max_font_size:
+            self.font_size += 2
+            self._update_font()
+            Out.status(f"字体大小: {self.font_size}")
+        else:
+            Out.status("已达到最大字体大小")
+
+    def decrease_font_size(self):
+        """减小字体大小"""
+        if self.font_size > self.min_font_size:
+            self.font_size -= 2
+            self._update_font()
+            Out.status(f"字体大小: {self.font_size}")
+        else:
+            Out.status("已达到最小字体大小")
+
+    def _update_font(self):
+        """更新字幕文本框的字体"""
+        font = QFont("Microsoft YaHei", self.font_size, QFont.Bold)
+        self.subtitle_text.setFont(font)
 
     def clear_subtitle(self):
         """清空字幕"""
