@@ -19,20 +19,25 @@ class SubtitleWindow(QWidget):
     def __init__(self):
         super().__init__()
 
-        # 窗口属性
+        # 窗口属性 - 强制置顶
         self.setWindowFlags(
             Qt.WindowStaysOnTopHint |  # 始终在最上层
             Qt.FramelessWindowHint |   # 无边框
-            Qt.Tool                     # 工具窗口（不在任务栏显示）
+            Qt.Tool |                  # 工具窗口（不在任务栏显示）
+            Qt.WindowStaysOnTopHint    # 再次确保置顶（某些系统需要）
         )
 
         # 设置透明背景
         self.setAttribute(Qt.WA_TranslucentBackground)
 
+        # 额外确保窗口保持在顶层（macOS 兼容性）
+        self.setAttribute(Qt.WA_MacAlwaysShowToolWindow, True)
+
         # 会议记录
         self.meeting_start_time = datetime.now()  # 记录会议开始时间
         self.subtitle_history = []  # 字幕历史记录
         self.current_partial_text = ""  # 当前正在显示的增量文本（未finalize）
+        self.current_source_text = ""  # 当前正在显示的源文本（英文）
 
         # 初始化 UI
         self.init_ui()
@@ -53,16 +58,17 @@ class SubtitleWindow(QWidget):
 
         # 字幕文本框（支持滚动和历史记录）
         self.subtitle_text = QTextEdit()
-        self.subtitle_text.setFont(QFont("Microsoft YaHei", 18, QFont.Bold))
+        self.subtitle_text.setFont(QFont("Microsoft YaHei", 20, QFont.Bold))  # 增大字体
         self.subtitle_text.setReadOnly(True)  # 只读
-        self.subtitle_text.setTextInteractionFlags(Qt.NoTextInteraction)  # 禁用文本交互，允许窗口拖动
+        # 允许文本选择和复制 (类似浏览器行为，但不可编辑)
+        self.subtitle_text.setTextInteractionFlags(Qt.TextBrowserInteraction)
         self.subtitle_text.setStyleSheet("""
             QTextEdit {
                 color: #FFFFFF;
-                background-color: rgba(0, 0, 0, 200);
-                border: none;
-                border-radius: 8px;
-                padding: 15px;
+                background-color: rgba(20, 20, 25, 220);
+                border: 2px solid rgba(100, 150, 255, 100);
+                border-radius: 10px;
+                padding: 20px;
             }
             QScrollBar:vertical {
                 background-color: rgba(255, 255, 255, 30);
@@ -115,53 +121,95 @@ class SubtitleWindow(QWidget):
 
         if is_final:
             # 最终文本：添加到历史记录
+            # 显示格式: [时间] 英文原文 → 中文翻译
             timestamp = datetime.now().strftime("%H:%M:%S")
-            formatted_text = f"[{timestamp}] {target_text}"
+            if source_text:
+                # 有源文本时显示双语
+                formatted_text = f"[{timestamp}] {source_text}\n　　　　→ {target_text}"
+            else:
+                # 没有源文本时只显示翻译
+                formatted_text = f"[{timestamp}] {target_text}"
             self.subtitle_history.append(formatted_text)
 
             # 清空当前增量文本
             self.current_partial_text = ""
             self.current_predicted_text = ""
+            self.current_source_text = ""
 
             # 重新渲染所有内容
             self._render_subtitles()
 
-            # Out.debug(f"字幕已添加: {target_text}")
+            # Out.debug(f"字幕已添加: {source_text} → {target_text}")
         else:
             # 增量文本：临时显示在最后一行
             self.current_partial_text = target_text
             self.current_predicted_text = predicted_text or ""  # 保存预测文本
+            self.current_source_text = source_text or ""  # 保存当前源文本
             self._render_subtitles()
 
             # Out.debug(f"增量字幕: {target_text}")
 
     def _render_subtitles(self):
         """渲染所有字幕（历史记录 + 当前增量）"""
-        # HTML 格式的文本
-        html_parts = []
+        # HTML 格式的文本 - 使用更好的排版样式
+        html_parts = [
+            '<div style="font-family: Microsoft YaHei, SimHei, sans-serif; font-size: 20px; line-height: 1.8;">'
+        ]
 
         # 添加历史记录（白色，已确定）
         for line in self.subtitle_history:
-            html_parts.append(f'<p style="color: white; margin: 5px 0;">{self._escape_html(line)}</p>')
+            # Check if this is bilingual format (contains newline + arrow)
+            if '\n' in line and '→' in line:
+                # Split into English and Chinese parts
+                parts = line.split('\n')
+                english_part = self._escape_html(parts[0])  # [timestamp] English text
+                chinese_part = self._escape_html(parts[1]) if len(parts) > 1 else ""  # 　　　　→ Chinese
+
+                # Render with proper HTML line breaks and styling
+                html_parts.append(f'''
+                    <div style="margin-bottom: 12px;">
+                        <p style="color: #FFD700; margin: 2px 0; font-size: 14px;">{english_part}</p>
+                        <p style="color: #FFFFFF; margin: 2px 0 2px 20px; font-size: 16px; font-weight: bold;">{chinese_part}</p>
+                    </div>
+                ''')
+            else:
+                # Single language format (Chinese only)
+                html_parts.append(f'<p style="color: white; margin: 8px 0; font-size: 16px;">{self._escape_html(line)}</p>')
 
         # 如果有增量文本，添加到末尾
         if self.current_partial_text:
             timestamp = datetime.now().strftime("%H:%M:%S")
 
+            # 显示源文本（英文，黄色）如果有的话
+            source_html = ""
+            if self.current_source_text:
+                source_html = f'''
+                    <p style="color: #FFD700; margin: 8px 0 2px 0; font-weight: normal; font-size: 16px;
+                              text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.8);">
+                        [{timestamp}] {self._escape_html(self.current_source_text)}
+                    </p>
+                '''
+
             if self.current_predicted_text:
-                # 有预测部分：已确定文本（深色）+ 预测文本（浅色）
+                # 有预测部分：已确定文本（亮白）+ 预测文本（灰色）
                 html_parts.append(f'''
-                    <p style="color: rgba(255, 255, 255, 0.95); margin: 5px 0;">
-                        [{timestamp}] {self._escape_html(self.current_partial_text)}<span style="color: rgba(160, 160, 160, 0.85);">{self._escape_html(self.current_predicted_text)}</span> <span style="color: rgba(100, 150, 255, 0.8);">...</span>
+                    {source_html}
+                    <p style="color: #FFFFFF; margin: 2px 0 8px 0; font-weight: bold;
+                              font-size: 16px; text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.8);">
+                        　　　　→ {self._escape_html(self.current_partial_text)}<span style="color: #AAAAAA; font-weight: normal; font-size: 16px;">{self._escape_html(self.current_predicted_text)}</span> <span style="color: #6496FF;">...</span>
                     </p>
                 ''')
             else:
                 # 没有预测部分，只有已确定文本
                 html_parts.append(f'''
-                    <p style="color: rgba(255, 255, 255, 0.9); margin: 5px 0;">
-                        [{timestamp}] {self._escape_html(self.current_partial_text)} <span style="color: rgba(100, 150, 255, 0.8);">...</span>
+                    {source_html}
+                    <p style="color: #FFFFFF; margin: 2px 0 8px 0; font-weight: bold;
+                              font-size: 16px; text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.8);">
+                        　　　　→ {self._escape_html(self.current_partial_text)} <span style="color: #6496FF;">...</span>
                     </p>
                 ''')
+
+        html_parts.append('</div>')
 
         # 组合所有 HTML
         html_content = ''.join(html_parts)
@@ -189,6 +237,7 @@ class SubtitleWindow(QWidget):
         self.subtitle_history.clear()
         self.current_partial_text = ""
         self.current_predicted_text = ""
+        self.current_source_text = ""
         self.subtitle_text.clear()
         self.meeting_start_time = datetime.now()  # 重置开始时间
         Out.status("字幕已清空")
