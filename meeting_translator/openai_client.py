@@ -121,6 +121,8 @@ class OpenAIClient(BaseTranslationClient):
         # S2S 输出门控：避免未检测到用户语音时产生“提示语/寒暄”并被播出
         # 仅在服务端 VAD 检测到一段语音结束后，才允许转发 assistant 的音频输出。
         self._s2s_expect_response = False
+        # 标记本轮响应是否真的包含用户语音的转录，防止服务端自发寒暄
+        self._s2s_has_source_transcription = False
 
     @property
     def input_rate(self) -> int:
@@ -289,7 +291,7 @@ Strict rules:
 
                     elif event_type == "response.audio.delta" and self.audio_enabled:
                         # 音频输出（仅 S2S）
-                        if not self._s2s_expect_response:
+                        if not (self._s2s_expect_response and self._s2s_has_source_transcription):
                             # 避免未检测到用户语音时的“开场白/提示语”被播出
                             continue
                         audio_b64 = event.get("delta", "")
@@ -303,7 +305,7 @@ Strict rules:
                         
                     elif event_type == "response.audio_transcript.done":
                         # 翻译完成（S2S 模式）
-                        if not self._s2s_expect_response:
+                        if not (self._s2s_expect_response and self._s2s_has_source_transcription):
                             continue
                         transcript = event.get("transcript", "")
 
@@ -323,11 +325,13 @@ Strict rules:
 
                     elif event_type == "conversation.item.input_audio_transcription.completed":
                         # 源语言转录
-                        pass
+                        if self.audio_enabled:
+                            self._s2s_has_source_transcription = True
 
                     elif event_type == "response.done":
                         # 响应完成（不输出）
                         self._s2s_expect_response = False
+                        self._s2s_has_source_transcription = False
                         pass
 
                     elif event_type == "input_audio_buffer.speech_started":
