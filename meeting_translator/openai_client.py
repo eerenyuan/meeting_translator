@@ -140,6 +140,11 @@ class OpenAIClient(BaseTranslationClient):
         self._previous_transcription = ""
         self._previous_translation = ""
 
+        # S2T: Delta 增量转录追踪（用于渐进式显示）
+        self._current_item_id = None
+        self._current_delta_transcript = ""
+        self._last_displayed_words = []  # 最后显示的单词列表（用于显示最近 4-6 个词）
+
         # 语言名称映射
         self.lang_names = {
             "en": "English",
@@ -248,6 +253,8 @@ class OpenAIClient(BaseTranslationClient):
             lang = "en"  # English
 
         # Build transcription prompt with technical context
+        # TODO: Move technical terms to external config (e.g., .env or glossary.json)
+        #       to avoid hardcoding them in the code
         transcription_config = {
             "model": self.transcribe_model,
             "language": lang,
@@ -438,10 +445,32 @@ Use this for continuity."""
                         pass
 
                     # ======== S2T 转录模式事件 ========
+                    elif event_type == "conversation.item.created":
+                        # 新的转录项创建 - 重置 delta 状态
+                        item = event.get("item", {})
+                        item_id = item.get("id", "")
+                        if item_id:
+                            self._current_item_id = item_id
+                            self._current_delta_transcript = ""
+                            self._last_displayed_words = []
+
+                    elif event_type == "conversation.item.input_audio_transcription.delta":
+                        # 增量转录 - 实时显示部分结果
+                        item_id = event.get("item_id", "")
+                        delta = event.get("delta", "")
+                        if item_id == self._current_item_id and delta:
+                            self._current_delta_transcript += delta
+                            await self._handle_s2t_delta(self._current_delta_transcript)
+
                     elif event_type == "conversation.item.input_audio_transcription.completed":
-                        # 转录完成 - 这是纯 ASR 结果
+                        # 转录完成 - 这是纯 ASR 结果（完整句子）
+                        item_id = event.get("item_id", "")
                         transcript = event.get("transcript", "")
-                        if transcript and transcript.strip():
+                        if item_id == self._current_item_id and transcript and transcript.strip():
+                            # 重置 delta 状态
+                            self._current_delta_transcript = ""
+                            self._last_displayed_words = []
+                            # 处理完整转录（包括翻译）
                             await self._handle_s2t_transcription(transcript)
 
                     # ======== S2S 会话模式事件 ========
@@ -487,8 +516,57 @@ Use this for continuity."""
             self.output_error(f"消息处理错误: {e}", exc_info=True)
             self.is_connected = False
 
+    async def _handle_s2t_delta(self, partial_transcript: str):
+        """处理 S2T 模式的增量转录（Delta 事件）
+
+        显示最近 4-6 个词，提供渐进式反馈
+        """
+        if not partial_transcript or not partial_transcript.strip():
+            return
+
+        # 分词：支持中英文
+        words = []
+        if self.source_language == "zh":
+            # 中文：按字符分割（每个汉字算一个词）
+            words = list(partial_transcript.strip())
+        else:
+            # 英文/其他：按空格分割
+            words = partial_transcript.strip().split()
+
+        # 如果没有足够的词，不显示
+        if len(words) < 2:
+            return
+
+        # 只显示最近 4-6 个词（根据语言调整）
+        if self.source_language == "zh":
+            display_count = min(6, len(words))  # 中文显示 6 个字
+        else:
+            display_count = min(5, len(words))  # 英文显示 5 个词
+
+        recent_words = words[-display_count:]
+
+        # 避免重复显示相同的内容
+        if recent_words == self._last_displayed_words:
+            return
+
+        self._last_displayed_words = recent_words
+
+        # 构建显示文本
+        if self.source_language == "zh":
+            display_text = "".join(recent_words)  # 中文不需要空格
+        else:
+            display_text = " ".join(recent_words)
+
+        # 显示部分转录（带省略号表示还在进行中）
+        self.output_subtitle(
+            target_text=f"... {display_text}",
+            source_text="",
+            is_final=False,
+            extra_metadata={"provider": "openai", "mode": "S2T", "stage": "Delta"}
+        )
+
     async def _handle_s2t_transcription(self, transcript: str):
-        """处理 S2T 模式的转录结果"""
+        """处理 S2T 模式的转录结果（完整句子）"""
         # 先输出源语言识别结果
         self.output_subtitle(
             target_text=transcript,
