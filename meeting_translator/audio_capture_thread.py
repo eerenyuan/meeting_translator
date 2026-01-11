@@ -152,7 +152,7 @@ class AudioCaptureThread:
             rate=self.sample_rate,
             input=True,
             input_device_index=self.device_index,
-            frames_per_buffer=self.chunk_size,
+            frames_per_buffer=0,  # 0 = 让 PortAudio 自动选择合适的值（兼容 WASAPI）
             stream_callback=self._audio_callback,  # 使用回调模式
             start=False  # 不自动启动，等待显式启动
         )

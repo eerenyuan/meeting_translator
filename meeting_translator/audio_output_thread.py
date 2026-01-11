@@ -303,7 +303,7 @@ class AudioOutputThread:
                 rate=self.output_sample_rate,
                 output=True,
                 output_device_index=self.device_index,
-                frames_per_buffer=self.chunk_size
+                frames_per_buffer=0  # 0 = 让 PortAudio 自动选择合适的值（兼容 WASAPI）
             )
 
             Out.status(f"音频输出流已打开（{self.output_sample_rate}Hz, {self.channels}ch）")
