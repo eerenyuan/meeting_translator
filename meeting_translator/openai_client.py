@@ -15,6 +15,7 @@ import asyncio
 import json
 import audioop
 import websockets
+import time
 from typing import Dict, Optional
 try:
     import pyaudiowpatch as pyaudio
@@ -143,6 +144,17 @@ class OpenAIClient(BaseTranslationClient):
         # S2T: Delta 增量转录追踪（用于渐进式显示）
         self._current_item_id = None
         self._current_delta_transcript = ""
+        # 英文显示节流（快，每200ms或4个新词）
+        self._last_english_time = 0.0
+        self._last_english_word_count = 0
+        self._english_throttle_ms = 200
+        self._english_word_delta = 4  # 每4个新词更新一次
+        # 中文翻译节流（慢，每3秒或10个新词）
+        self._last_translation_time = 0.0
+        self._last_translation_word_count = 0
+        self._translation_throttle_ms = 3000  # 3秒
+        self._translation_word_delta = 10  # 每10个新词翻译一次
+        self._translation_task = None  # 后台翻译任务
 
         # 语言名称映射
         self.lang_names = {
@@ -451,6 +463,10 @@ Use this for continuity."""
                         if item_id:
                             self._current_item_id = item_id
                             self._current_delta_transcript = ""
+                            self._last_english_time = 0.0
+                            self._last_english_word_count = 0
+                            self._last_translation_time = 0.0
+                            self._last_translation_word_count = 0
 
                     elif event_type == "conversation.item.input_audio_transcription.delta":
                         # 增量转录 - 实时显示部分结果
@@ -465,6 +481,9 @@ Use this for continuity."""
                         item_id = event.get("item_id", "")
                         transcript = event.get("transcript", "")
                         if item_id == self._current_item_id and transcript and transcript.strip():
+                            # 取消任何待处理的后台翻译任务
+                            if self._translation_task and not self._translation_task.done():
+                                self._translation_task.cancel()
                             # 重置 delta 状态
                             self._current_delta_transcript = ""
                             # 处理完整转录（包括最终翻译）
@@ -516,51 +535,87 @@ Use this for continuity."""
     async def _handle_s2t_delta(self, partial_transcript: str):
         """处理 S2T 模式的增量转录（Delta 事件）
 
-        渐进式显示：立即显示英文并翻译为中文，随着 delta 更新而更新
+        分离英文和中文的节流策略：
+        - 英文：快速更新（每200ms或4个新词），提供即时反馈
+        - 中文：慢速翻译（每3秒或10个新词），避免API过载
         """
         if not partial_transcript or not partial_transcript.strip():
             return
 
         partial_transcript = partial_transcript.strip()
 
-        # 分词检查：确保有足够内容才显示
+        # 分词
         if self.source_language == "zh":
             words = list(partial_transcript)
-            min_words = 3  # 至少 3 个字
         else:
             words = partial_transcript.split()
-            min_words = 2  # 至少 2 个词
 
-        if len(words) < min_words:
+        word_count = len(words)
+        if word_count < 2:
             return
 
-        # 避免重复翻译相同内容（检查完整文本而非单词列表）
-        if partial_transcript == self._previous_transcription:
-            return
+        current_time = time.time() * 1000  # 毫秒
 
-        # 1. 先立即显示英文源文本（不等翻译）
-        self.output_subtitle(
-            target_text=partial_transcript,
-            source_text="",
-            is_final=False,
-            extra_metadata={"provider": "openai", "mode": "S2T", "stage": "Delta-Source"}
+        # ========== 英文显示（快速，低延迟）==========
+        time_since_english = current_time - self._last_english_time
+        words_since_english = word_count - self._last_english_word_count
+
+        should_update_english = (
+            time_since_english >= self._english_throttle_ms or
+            words_since_english >= self._english_word_delta
         )
 
-        # 2. 立即翻译并显示中文（即使是部分文本）
-        partial_translation = self._translate_text(partial_transcript)
+        if should_update_english:
+            self._last_english_time = current_time
+            self._last_english_word_count = word_count
 
-        if partial_translation:
-            # 显示翻译结果（双语）
+            # 立即显示英文（不等待翻译）
             self.output_subtitle(
-                target_text=partial_translation,
-                source_text=partial_transcript,
+                target_text=partial_transcript,
+                source_text="",
                 is_final=False,
-                extra_metadata={"provider": "openai", "mode": "S2T", "stage": "Delta-Translation"}
+                extra_metadata={"provider": "openai", "mode": "S2T", "stage": "Delta-EN"}
             )
 
-            # 更新临时上下文
-            self._previous_transcription = partial_transcript
-            self._previous_translation = partial_translation
+        # ========== 中文翻译（慢速，后台）==========
+        time_since_translation = current_time - self._last_translation_time
+        words_since_translation = word_count - self._last_translation_word_count
+
+        should_translate = (
+            time_since_translation >= self._translation_throttle_ms or
+            words_since_translation >= self._translation_word_delta
+        )
+
+        if should_translate and partial_transcript != self._previous_transcription:
+            self._last_translation_time = current_time
+            self._last_translation_word_count = word_count
+
+            # 后台翻译（fire-and-forget，不阻塞）
+            self._translation_task = asyncio.create_task(
+                self._translate_delta_async(partial_transcript)
+            )
+
+    async def _translate_delta_async(self, text: str):
+        """后台异步翻译 delta 文本（fire-and-forget）"""
+        try:
+            loop = asyncio.get_event_loop()
+            translation = await loop.run_in_executor(
+                None, self._translate_text, text
+            )
+
+            if translation:
+                self.output_subtitle(
+                    target_text=translation,
+                    source_text=text,
+                    is_final=False,
+                    extra_metadata={"provider": "openai", "mode": "S2T", "stage": "Delta-CN"}
+                )
+                self._previous_transcription = text
+                self._previous_translation = translation
+        except asyncio.CancelledError:
+            pass  # 任务被取消，忽略
+        except Exception as e:
+            self.output_debug(f"Delta翻译失败: {e}")
 
     async def _handle_s2t_transcription(self, transcript: str):
         """处理 S2T 模式的转录结果（完整句子）
@@ -574,7 +629,11 @@ Use this for continuity."""
             translation = self._previous_translation
         else:
             # 完整句子可能与 delta 不同，或首次翻译，重新翻译以获得更好质量
-            translation = self._translate_text(transcript)
+            # 在线程池中运行以避免阻塞事件循环
+            loop = asyncio.get_event_loop()
+            translation = await loop.run_in_executor(
+                None, self._translate_text, transcript
+            )
 
         if translation:
             # 输出最终翻译结果（标记为 final）
