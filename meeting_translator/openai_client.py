@@ -8,6 +8,7 @@ import time
 import base64
 import asyncio
 import json
+import audioop
 import websockets
 from typing import Dict, Optional
 try:
@@ -121,8 +122,8 @@ class OpenAIClient(BaseTranslationClient):
         # S2S 输出门控：避免未检测到用户语音时产生“提示语/寒暄”并被播出
         # 仅在服务端 VAD 检测到一段语音结束后，才允许转发 assistant 的音频输出。
         self._s2s_expect_response = False
-        # 标记本轮响应是否真的包含用户语音的转录，防止服务端自发寒暄
-        self._s2s_has_source_transcription = False
+        self._s2s_has_user_audio = False
+        self._s2s_speech_rms_threshold = 500  # 阈值：近似 16-bit PCM RMS
 
     @property
     def input_rate(self) -> int:
@@ -266,6 +267,13 @@ Strict rules:
             return
 
         try:
+            if self.audio_enabled:
+                try:
+                    if audioop.rms(audio_data, 2) > self._s2s_speech_rms_threshold:
+                        self._s2s_has_user_audio = True
+                except Exception:
+                    pass
+
             event = {
                 "type": "input_audio_buffer.append",
                 "audio": base64.b64encode(audio_data).decode()
@@ -291,7 +299,7 @@ Strict rules:
 
                     elif event_type == "response.audio.delta" and self.audio_enabled:
                         # 音频输出（仅 S2S）
-                        if not (self._s2s_expect_response and self._s2s_has_source_transcription):
+                        if not self._s2s_expect_response:
                             # 避免未检测到用户语音时的“开场白/提示语”被播出
                             continue
                         audio_b64 = event.get("delta", "")
@@ -305,7 +313,7 @@ Strict rules:
                         
                     elif event_type == "response.audio_transcript.done":
                         # 翻译完成（S2S 模式）
-                        if not (self._s2s_expect_response and self._s2s_has_source_transcription):
+                        if not self._s2s_expect_response:
                             continue
                         transcript = event.get("transcript", "")
 
@@ -325,13 +333,11 @@ Strict rules:
 
                     elif event_type == "conversation.item.input_audio_transcription.completed":
                         # 源语言转录
-                        if self.audio_enabled:
-                            self._s2s_has_source_transcription = True
+                        pass
 
                     elif event_type == "response.done":
                         # 响应完成（不输出）
                         self._s2s_expect_response = False
-                        self._s2s_has_source_transcription = False
                         pass
 
                     elif event_type == "input_audio_buffer.speech_started":
@@ -339,8 +345,11 @@ Strict rules:
 
                     elif event_type == "input_audio_buffer.speech_stopped":
                         # 服务端 VAD 检测到一段语音结束，接下来应是本轮翻译输出
-                        if self.audio_enabled:
+                        if self.audio_enabled and self._s2s_has_user_audio:
                             self._s2s_expect_response = True
+                        else:
+                            self._s2s_expect_response = False
+                        self._s2s_has_user_audio = False
 
                     elif event_type == "error":
                         error = event.get("error", {})
