@@ -143,7 +143,6 @@ class OpenAIClient(BaseTranslationClient):
         # S2T: Delta 增量转录追踪（用于渐进式显示）
         self._current_item_id = None
         self._current_delta_transcript = ""
-        self._last_displayed_words = []  # 最后显示的单词列表（用于显示最近 4-6 个词）
 
         # 语言名称映射
         self.lang_names = {
@@ -452,7 +451,6 @@ Use this for continuity."""
                         if item_id:
                             self._current_item_id = item_id
                             self._current_delta_transcript = ""
-                            self._last_displayed_words = []
 
                     elif event_type == "conversation.item.input_audio_transcription.delta":
                         # 增量转录 - 实时显示部分结果
@@ -469,8 +467,7 @@ Use this for continuity."""
                         if item_id == self._current_item_id and transcript and transcript.strip():
                             # 重置 delta 状态
                             self._current_delta_transcript = ""
-                            self._last_displayed_words = []
-                            # 处理完整转录（包括翻译）
+                            # 处理完整转录（包括最终翻译）
                             await self._handle_s2t_transcription(transcript)
 
                     # ======== S2S 会话模式事件 ========
@@ -519,72 +516,73 @@ Use this for continuity."""
     async def _handle_s2t_delta(self, partial_transcript: str):
         """处理 S2T 模式的增量转录（Delta 事件）
 
-        显示最近 4-6 个词，提供渐进式反馈
+        渐进式显示：立即显示英文并翻译为中文，随着 delta 更新而更新
         """
         if not partial_transcript or not partial_transcript.strip():
             return
 
-        # 分词：支持中英文
-        words = []
-        if self.source_language == "zh":
-            # 中文：按字符分割（每个汉字算一个词）
-            words = list(partial_transcript.strip())
-        else:
-            # 英文/其他：按空格分割
-            words = partial_transcript.strip().split()
+        partial_transcript = partial_transcript.strip()
 
-        # 如果没有足够的词，不显示
-        if len(words) < 2:
+        # 分词检查：确保有足够内容才显示
+        if self.source_language == "zh":
+            words = list(partial_transcript)
+            min_words = 3  # 至少 3 个字
+        else:
+            words = partial_transcript.split()
+            min_words = 2  # 至少 2 个词
+
+        if len(words) < min_words:
             return
 
-        # 只显示最近 4-6 个词（根据语言调整）
-        if self.source_language == "zh":
-            display_count = min(6, len(words))  # 中文显示 6 个字
-        else:
-            display_count = min(5, len(words))  # 英文显示 5 个词
-
-        recent_words = words[-display_count:]
-
-        # 避免重复显示相同的内容
-        if recent_words == self._last_displayed_words:
+        # 避免重复翻译相同内容（检查完整文本而非单词列表）
+        if partial_transcript == self._previous_transcription:
             return
 
-        self._last_displayed_words = recent_words
-
-        # 构建显示文本
-        if self.source_language == "zh":
-            display_text = "".join(recent_words)  # 中文不需要空格
-        else:
-            display_text = " ".join(recent_words)
-
-        # 显示部分转录（带省略号表示还在进行中）
+        # 1. 先立即显示英文源文本（不等翻译）
         self.output_subtitle(
-            target_text=f"... {display_text}",
+            target_text=partial_transcript,
             source_text="",
             is_final=False,
-            extra_metadata={"provider": "openai", "mode": "S2T", "stage": "Delta"}
+            extra_metadata={"provider": "openai", "mode": "S2T", "stage": "Delta-Source"}
         )
+
+        # 2. 立即翻译并显示中文（即使是部分文本）
+        partial_translation = self._translate_text(partial_transcript)
+
+        if partial_translation:
+            # 显示翻译结果（双语）
+            self.output_subtitle(
+                target_text=partial_translation,
+                source_text=partial_transcript,
+                is_final=False,
+                extra_metadata={"provider": "openai", "mode": "S2T", "stage": "Delta-Translation"}
+            )
+
+            # 更新临时上下文
+            self._previous_transcription = partial_transcript
+            self._previous_translation = partial_translation
 
     async def _handle_s2t_transcription(self, transcript: str):
-        """处理 S2T 模式的转录结果（完整句子）"""
-        # 先输出源语言识别结果
-        self.output_subtitle(
-            target_text=transcript,
-            source_text="",
-            is_final=False,
-            extra_metadata={"provider": "openai", "mode": "S2T", "stage": "ASR"}
-        )
+        """处理 S2T 模式的转录结果（完整句子）
 
-        # 翻译文本
-        translation = self._translate_text(transcript)
+        完成时做最终翻译。如果与之前 delta 翻译的文本相同，可能复用翻译；
+        否则重新翻译以获得更准确的结果（因为现在有完整上下文）
+        """
+        # 检查是否需要重新翻译
+        # 如果完整转录与最后的 delta 转录相同，可以复用之前的翻译
+        if transcript == self._previous_transcription and self._previous_translation:
+            translation = self._previous_translation
+        else:
+            # 完整句子可能与 delta 不同，或首次翻译，重新翻译以获得更好质量
+            translation = self._translate_text(transcript)
 
         if translation:
-            # 输出最终翻译结果
+            # 输出最终翻译结果（标记为 final）
             self.output_subtitle(
                 target_text=translation,
                 source_text=transcript,
                 is_final=True,
-                extra_metadata={"provider": "openai", "mode": "S2T", "stage": "Translation"}
+                extra_metadata={"provider": "openai", "mode": "S2T", "stage": "Final"}
             )
 
             # 更新上下文
