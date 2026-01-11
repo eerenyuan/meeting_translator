@@ -74,8 +74,8 @@ class SubtitleHandler(BaseHandler, QObject):
         """
         # 这个方法在主线程中执行（通过 Qt 信号/槽机制）
         self.subtitle_window.update_subtitle(
-            source_text=source_text,
-            target_text=target_text,
+            source=source_text,
+            target=target_text,
             is_final=is_final,
             predicted_text=predicted_text if not is_final else None
         )

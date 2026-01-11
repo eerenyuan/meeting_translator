@@ -106,30 +106,27 @@ class SubtitleWindow(QWidget):
 
         self.setLayout(layout)
 
-    def update_subtitle(self, source_text: str, target_text: str, is_final: bool = True,predicted_text: str = None):
+    def update_subtitle(self, source: str, target: str, is_final: bool = True, predicted_text: str = None):
         """
         更新字幕内容
 
         Args:
-            source_text: 源语言文本（英文）
-            target_text: 目标语言文本（中文）
+            source: 源语言文本
+            target: 目标语言文本
             is_final: 是否为最终文本（True=已finalize，False=增量文本）
             predicted_text: 预测文本（Qwen API的stash部分，可选）
         """
-        if not target_text:
+        if not target:
             return
 
         if is_final:
-            # 最终文本：添加到历史记录
-            # 显示格式: [时间] 英文原文 → 中文翻译
-            timestamp = datetime.now().strftime("%H:%M:%S")
-            if source_text:
-                # 有源文本时显示双语
-                formatted_text = f"[{timestamp}] {source_text}\n　　　　→ {target_text}"
-            else:
-                # 没有源文本时只显示翻译
-                formatted_text = f"[{timestamp}] {target_text}"
-            self.subtitle_history.append(formatted_text)
+            # 最终文本：添加到历史记录（存储结构化数据）
+            timestamp = datetime.now()
+            self.subtitle_history.append({
+                'timestamp': timestamp,
+                'source': source or "",
+                'target': target
+            })
 
             # 清空当前增量文本
             self.current_partial_text = ""
@@ -139,79 +136,73 @@ class SubtitleWindow(QWidget):
             # 重新渲染所有内容
             self._render_subtitles()
 
-            # Out.debug(f"字幕已添加: {source_text} → {target_text}")
+            # Out.debug(f"字幕已添加: {source} → {target}")
         else:
             # 增量文本：临时显示在最后一行
-            self.current_partial_text = target_text
+            self.current_partial_text = target
             self.current_predicted_text = predicted_text or ""  # 保存预测文本
-            self.current_source_text = source_text or ""  # 保存当前源文本
+            self.current_source_text = source or ""  # 保存当前源文本
             self._render_subtitles()
 
-            # Out.debug(f"增量字幕: {target_text}")
+            # Out.debug(f"增量字幕: {target}")
 
     def _render_subtitles(self):
         """渲染所有字幕（历史记录 + 当前增量）"""
         # HTML 格式的文本 - 使用更好的排版样式
-        html_parts = [
-            '<div style="font-family: Microsoft YaHei, SimHei, sans-serif; font-size: 20px; line-height: 1.8;">'
-        ]
+        html_parts = []
 
         # 添加历史记录（白色，已确定）
-        for line in self.subtitle_history:
-            # Check if this is bilingual format (contains newline + arrow)
-            if '\n' in line and '→' in line:
-                # Split into English and Chinese parts
-                parts = line.split('\n')
-                english_part = self._escape_html(parts[0])  # [timestamp] English text
-                chinese_part = self._escape_html(parts[1]) if len(parts) > 1 else ""  # 　　　　→ Chinese
+        for item in self.subtitle_history:
+            timestamp_str = item['timestamp'].strftime("%H:%M:%S")
+            source = item['source']
+            target = item['target']
 
-                # 双语：英文 + 中文，使用 span 控制行内样式
-                html_parts.append(f'''
-                    <div style="margin-bottom: 8px;">
-                        <div style="color: #FFD700; font-size: 14px; margin-bottom: 2px;">{english_part}</div>
-                        <div style="color: #FFFFFF; font-size: 16px; font-weight: bold; margin-left: 20px;">{chinese_part}</div>
-                    </div>
-                ''')
+            # target 的显示格式始终保持一致（不包含箭头）
+            target_html = f'{self._escape_html(target)}'
+
+            # 构建头部行：timestamp + (source + 箭头) 或仅 timestamp
+            if source:
+                # 双语格式：source + 箭头作为 source 的一部分
+                header_line = f"[{timestamp_str}] {self._escape_html(source)} 　　　　→"
             else:
-                # 单语言：只有中文，使用 div 统一结构
-                html_parts.append(f'<div style="color: white; font-size: 16px; margin-bottom: 8px;">{self._escape_html(line)}</div>')
+                # 单语言格式：只有 timestamp
+                header_line = f"[{timestamp_str}]"
+
+            # 复用相同的结构
+            html_parts.append(f'''
+                <div style="margin-bottom: 12px;">
+                    <span>{header_line}</span><span>{target_html}</span>
+                    
+                </div>
+            ''')
 
         # 如果有增量文本，添加到末尾
         if self.current_partial_text:
-            timestamp = datetime.now().strftime("%H:%M:%S")
+            timestamp_str = datetime.now().strftime("%H:%M:%S")
 
-            # 显示源文本（英文，黄色）如果有的话
-            source_html = ""
+            # target 的显示格式始终保持一致（不包含箭头）
+            target_html = f'{self._escape_html(self.current_partial_text)}'
+            # 构建头部行：timestamp + (source + 箭头) 或仅 timestamp
             if self.current_source_text:
-                source_html = f'''
-                    <div style="color: #FFD700; margin: 8px 0 2px 0; font-weight: normal; font-size: 16px;
-                              text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.8);">
-                        [{timestamp}] {self._escape_html(self.current_source_text)}
-                    </div>
-                '''
+                # 双语格式：source + 箭头作为 source 的一部分
+                header_line = f"[{timestamp_str}] {self._escape_html(self.current_source_text)} 　　　　→"
+            else:
+                # 单语言格式：只有 timestamp
+                header_line = f"[{timestamp_str}]"
 
             if self.current_predicted_text:
-                # 有预测部分：已确定文本（亮白）+ 预测文本（灰色）
-                arrow_prefix = "　　　　→ " if self.current_source_text else ""
-                html_parts.append(f'''
-                    {source_html}
-                    <div style="color: #FFFFFF; margin: 2px 0 8px 0; font-weight: bold;
-                              font-size: 16px; text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.8);">
-                        {arrow_prefix}{self._escape_html(self.current_partial_text)}<span style="color: #AAAAAA; font-weight: normal; font-size: 16px;">{self._escape_html(self.current_predicted_text)}</span> <span style="color: #6496FF;">...</span>
-                    </div>
-                ''')
-            else:
-                # 没有预测部分，只有已确定文本
-                arrow_prefix = "　　　　→ " if self.current_source_text else ""
-                html_parts.append(f'''
-                    {source_html}
-                    <div style="color: #FFFFFF; margin: 2px 0 8px 0; font-weight: bold;
-                              font-size: 16px; text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.8);">
-                        {arrow_prefix}{self._escape_html(self.current_partial_text)} <span style="color: #6496FF;">...</span>
-                    </div>
-                ''')
-
-        html_parts.append('</div>')
+                predicted_str=f'<span style="color: rgba(160, 160, 160, 0.85);">{self._escape_html(self.current_predicted_text)}</span> '
+            else: 
+                predicted_str=""
+            # 复用相同的结构
+            html_parts.append(f'''
+                <div style="margin-bottom: 12px;">
+                    <span>{header_line}</span>
+                    <span>{target_html}</span>
+                    {predicted_str}
+                    <span style="color: rgba(100, 150, 255, 0.8);">...</span>
+                </div>
+            ''')
 
         # 组合所有 HTML
         html_content = ''.join(html_parts)
@@ -275,22 +266,23 @@ class SubtitleWindow(QWidget):
                 f.write(f"会议时长: {duration_minutes} 分钟\n")
                 f.write("=" * 50 + "\n\n")
 
-                for line in self.subtitle_history:
-                    f.write(line + "\n\n")
+                # 从结构化数据生成文件格式
+                for item in self.subtitle_history:
+                    timestamp_str = item['timestamp'].strftime("%H:%M:%S")
+                    source = item['source']
+                    target = item['target']
+
+                    if source:
+                        # 双语格式
+                        f.write(f"[{timestamp_str}] {source} 　　　　→ {target}\n\n")
+                    else:
+                        # 单语言格式
+                        f.write(f"[{timestamp_str}] {target}\n\n")
 
             return filepath
         except Exception as e:
             Out.error(f"保存字幕失败: {e}")
             return ""
-
-    def get_subtitle_content(self) -> str:
-        """
-        获取所有字幕内容（用于外部保存）
-
-        Returns:
-            str: 字幕内容
-        """
-        return "\n\n".join(self.subtitle_history)
 
     # 拖动功能
     def mousePressEvent(self, event):
