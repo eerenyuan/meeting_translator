@@ -272,7 +272,12 @@ class MeetingTranslatorApp(QWidget):
         listen_layout.addWidget(listen_label)
         self.listen_device_combo = QComboBox()
         self.listen_device_combo.currentIndexChanged.connect(self.on_listen_device_selected)
-        listen_layout.addWidget(self.listen_device_combo)
+
+        # 输入下拉框 + 刷新按钮（右侧）
+        self.listen_device_row_layout = QHBoxLayout()
+        self.listen_device_row_layout.setSpacing(8)
+        self.listen_device_row_layout.addWidget(self.listen_device_combo, 1)
+        listen_layout.addLayout(self.listen_device_row_layout)
         self.listen_device_info = QLabel("请选择设备")
         self.listen_device_info.setObjectName("deviceInfoLabel")
         listen_layout.addWidget(self.listen_device_info)
@@ -291,7 +296,12 @@ class MeetingTranslatorApp(QWidget):
         speak_layout.addWidget(speak_input_label)
         self.speak_input_combo = QComboBox()
         self.speak_input_combo.currentIndexChanged.connect(self.on_speak_device_selected)
-        speak_layout.addWidget(self.speak_input_combo)
+
+        # 输入下拉框 + 刷新按钮（右侧）
+        self.speak_input_row_layout = QHBoxLayout()
+        self.speak_input_row_layout.setSpacing(8)
+        self.speak_input_row_layout.addWidget(self.speak_input_combo, 1)
+        speak_layout.addLayout(self.speak_input_row_layout)
 
         # 英文虚拟麦克风输出
         speak_output_label = QLabel("🔊 英文虚拟麦克风输出（VB-Cable）:")
@@ -346,7 +356,9 @@ class MeetingTranslatorApp(QWidget):
         self.refresh_devices_btn = QPushButton("🔄 刷新设备列表")
         self.refresh_devices_btn.setObjectName("secondaryButton")
         self.refresh_devices_btn.clicked.connect(self.on_refresh_devices)
-        device_layout.addWidget(self.refresh_devices_btn)
+
+        # 默认放到听模式输入的右侧（后续会在 on_mode_changed 中动态移动）
+        self.listen_device_row_layout.addWidget(self.refresh_devices_btn)
 
         device_group.setLayout(device_layout)
         layout.addWidget(device_group)
@@ -431,7 +443,30 @@ class MeetingTranslatorApp(QWidget):
             self.listen_device_widget.show()
             self.speak_device_widget.show()
 
+        self._update_refresh_button_location()
         Out.status(f"切换到模式: {self.current_mode.value}")
+
+    def _update_refresh_button_location(self):
+        """将刷新按钮放到当前可见的输入设备下拉框右侧。"""
+        if not hasattr(self, "refresh_devices_btn"):
+            return
+
+        # 先从可能存在的布局里移除，避免占位/重复
+        for layout in (
+            getattr(self, "listen_device_row_layout", None),
+            getattr(self, "speak_input_row_layout", None),
+        ):
+            if layout is not None:
+                layout.removeWidget(self.refresh_devices_btn)
+
+        if self.current_mode == TranslationMode.SPEAK:
+            target_layout = getattr(self, "speak_input_row_layout", None)
+        else:
+            # LISTEN / BIDIRECTIONAL：优先放到「会议音频输入」右侧
+            target_layout = getattr(self, "listen_device_row_layout", None)
+
+        if target_layout is not None:
+            target_layout.addWidget(self.refresh_devices_btn)
 
     def on_listen_device_selected(self, index):
         """听模式设备选择事件"""
