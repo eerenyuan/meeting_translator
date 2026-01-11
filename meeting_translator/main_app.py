@@ -715,7 +715,7 @@ class MeetingTranslatorApp(QWidget):
             display_name = device.get('display_name', device['name'])
             # 标记 loopback 设备为推荐（用于捕获系统音频）
             if device.get('is_loopback'):
-                display_name += " [推荐-系统音频]"
+                display_name += " [推荐]"
             self.s2t_device_combo.addItem(display_name, device)
 
         self._auto_select_loopback(self.s2t_device_combo)
