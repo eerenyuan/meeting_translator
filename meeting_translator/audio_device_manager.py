@@ -5,6 +5,7 @@
 
 import sys
 import re
+import platform
 from typing import List, Dict, Set
 
 try:
@@ -126,13 +127,14 @@ class AudioDeviceManager:
         devices = []
         device_count = self.pyaudio_instance.get_device_count()
 
-        # 获取 WASAPI host API 索引
+        # 获取 WASAPI host API 索引 (仅 Windows)
         wasapi_index = None
-        try:
-            wasapi_info = self.pyaudio_instance.get_host_api_info_by_type(pyaudio.paWASAPI)
-            wasapi_index = wasapi_info['index']
-        except Exception as e:
-            Out.warning(f"WASAPI 不可用: {e}")
+        if platform.system() == 'Windows':
+            try:
+                wasapi_info = self.pyaudio_instance.get_host_api_info_by_type(pyaudio.paWASAPI)
+                wasapi_index = wasapi_info['index']
+            except Exception as e:
+                Out.warning(f"WASAPI 不可用: {e}")
 
         for i in range(device_count):
             try:
