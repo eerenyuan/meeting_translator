@@ -53,6 +53,7 @@ logs/
 # Exception: Voice sample files (for voice preview feature)
 !assets/*.wav
 !voice_samples/*.wav
+!language_test_outputs/*.wav
 
 # Test outputs
 test_output/
