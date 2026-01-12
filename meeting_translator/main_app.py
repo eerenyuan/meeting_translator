@@ -22,6 +22,7 @@ from PyQt5.QtWidgets import (
     QPushButton, QComboBox, QLabel, QGroupBox
 )
 from PyQt5.QtCore import Qt, pyqtSignal, QObject
+from PyQt5.QtGui import QBrush, QColor
 from dotenv import load_dotenv
 
 
@@ -72,6 +73,10 @@ class MeetingTranslatorApp(QWidget):
         if not self.api_key:
             Out.error("未设置 DASHSCOPE_API_KEY 或 ALIYUN_API_KEY 环境变量")
             sys.exit(1)
+
+        # 语言配置
+        self.my_language = "中文"  # 我的语言
+        self.meeting_language = "英语"  # 会议语言
 
         # S2T 和 S2S 独立配置
         self.s2t_provider = "aliyun"
@@ -223,6 +228,34 @@ class MeetingTranslatorApp(QWidget):
         layout.setSpacing(12)
         layout.setContentsMargins(16, 16, 16, 16)
 
+        # 0. 语言选择（最顶部）
+        language_group = QGroupBox("🌍 语言设置")
+        language_layout = QHBoxLayout()
+        language_layout.setSpacing(12)
+
+        # 我的语言
+        my_lang_label = QLabel("我的语言:")
+        my_lang_label.setObjectName("subtitleLabel")
+        language_layout.addWidget(my_lang_label)
+
+        self.my_language_combo = QComboBox()
+        self._populate_language_combo(self.my_language_combo)
+        self.my_language_combo.currentIndexChanged.connect(self.on_my_language_changed)
+        language_layout.addWidget(self.my_language_combo, 1)
+
+        # 会议语言
+        meeting_lang_label = QLabel("会议语言:")
+        meeting_lang_label.setObjectName("subtitleLabel")
+        language_layout.addWidget(meeting_lang_label)
+
+        self.meeting_language_combo = QComboBox()
+        self._populate_language_combo(self.meeting_language_combo)
+        self.meeting_language_combo.currentIndexChanged.connect(self.on_meeting_language_changed)
+        language_layout.addWidget(self.meeting_language_combo, 1)
+
+        language_group.setLayout(language_layout)
+        layout.addWidget(language_group)
+
         # 1. 刷新设备按钮（统一在顶部）
         devices_header = QHBoxLayout()
         self.refresh_devices_btn = QPushButton("🔄 刷新设备列表")
@@ -303,27 +336,27 @@ class MeetingTranslatorApp(QWidget):
         s2s_layout.addLayout(s2s_provider_layout)
 
         # S2S 输入设备（麦克风）
-        s2s_input_label = QLabel("🎤 中文麦克风:")
-        s2s_input_label.setObjectName("subtitleLabel")
-        s2s_layout.addWidget(s2s_input_label)
+        self.s2s_input_label = QLabel("🎤 我的语言麦克风:")
+        self.s2s_input_label.setObjectName("subtitleLabel")
+        s2s_layout.addWidget(self.s2s_input_label)
 
         self.s2s_input_combo = QComboBox()
         self.s2s_input_combo.currentIndexChanged.connect(self.on_s2s_device_selected)
         s2s_layout.addWidget(self.s2s_input_combo)
 
         # S2S 输出设备（虚拟麦克风）
-        s2s_output_label = QLabel("🔊 英文虚拟麦克风输出:")
-        s2s_output_label.setObjectName("subtitleLabel")
-        s2s_layout.addWidget(s2s_output_label)
+        self.s2s_output_label = QLabel("🔊 会议语言虚拟麦克风输出:")
+        self.s2s_output_label.setObjectName("subtitleLabel")
+        s2s_layout.addWidget(self.s2s_output_label)
 
         self.s2s_output_combo = QComboBox()
         self.s2s_output_combo.currentIndexChanged.connect(self.on_s2s_device_selected)
         s2s_layout.addWidget(self.s2s_output_combo)
 
         # S2S 音色选择
-        s2s_voice_label = QLabel("🎭 英文语音音色:")
-        s2s_voice_label.setObjectName("subtitleLabel")
-        s2s_layout.addWidget(s2s_voice_label)
+        self.s2s_voice_label = QLabel("🎭 会议语言语音音色:")
+        self.s2s_voice_label.setObjectName("subtitleLabel")
+        s2s_layout.addWidget(self.s2s_voice_label)
 
         s2s_voice_control_layout = QHBoxLayout()
         s2s_voice_control_layout.setSpacing(8)
@@ -357,23 +390,220 @@ class MeetingTranslatorApp(QWidget):
         layout.addWidget(s2s_group)
 
         # 帮助信息
-        help_label = QLabel("""
+        self.help_label = QLabel("""
         <b>📖 使用说明:</b><br>
-        <b>👂 S2T（字幕翻译）</b>: 捕获会议音频（英文）→显示中文字幕<br>
-        <b>🎤 S2S（语音翻译）</b>: 捕获中文麦克风→输出英文到虚拟麦克风<br>
+        <b>👂 S2T（字幕翻译）</b>: 捕获会议音频（会议语言）→显示我的语言字幕<br>
+        <b>🎤 S2S（语音翻译）</b>: 捕获我的语言麦克风→输出会议语言到虚拟麦克风<br>
         <br>
         <b>💡 提示:</b> S2T 和 S2S 可独立运行，使用不同的 API 提供商<br>
         S2S 需要安装 VB-Audio Cable 虚拟音频设备
         """)
-        help_label.setWordWrap(True)
-        help_label.setObjectName("infoLabel")
-        layout.addWidget(help_label)
+        self.help_label.setWordWrap(True)
+        self.help_label.setObjectName("infoLabel")
+        layout.addWidget(self.help_label)
 
         self.setLayout(layout)
 
     def update_status(self, text, status_type="ready"):
         """更新状态显示（已移除状态显示，此方法为兼容性保留）"""
         pass  # 状态显示已移除，按钮文字和样式已足够显示状态
+
+    # ===== 语言设置方法 =====
+
+    def _populate_language_combo(self, combo: QComboBox):
+        """
+        填充语言下拉框
+        使用所有 provider 支持的语言的并集
+        按流行程度排序：中文、英语始终在前两位，其他按流行程度
+        """
+        from translation_client_factory import TranslationClientFactory
+
+        # 收集所有语言
+        all_languages = set()
+        for provider in ["aliyun", "openai", "doubao"]:
+            languages = TranslationClientFactory.get_supported_languages(provider)
+            all_languages.update(languages.keys())
+
+        # 按流行程度排序
+        popularity_order = [
+            "中文",
+            "英语",
+            "西班牙语",   # 世界第二大母语使用者
+            "法语",       # 国际通用语之一
+            "葡萄牙语",   # 巴西、葡萄牙等
+            "俄语",       # 广泛使用
+            "日语",       # 经济强国
+            "韩语",       # 经济强国
+            "德语",       # 欧洲主要语言
+            "意大利语",   # 欧洲主要语言
+            "粤语",       # 中文方言
+        ]
+
+        # 过滤出实际支持的语言，保持流行度顺序
+        sorted_languages = [lang for lang in popularity_order if lang in all_languages]
+
+        # 添加任何不在流行度列表中的语言（按字母顺序）
+        remaining_languages = sorted(all_languages - set(sorted_languages))
+        sorted_languages.extend(remaining_languages)
+
+        # 清空并添加
+        combo.clear()
+        for lang in sorted_languages:
+            combo.addItem(lang)
+
+    def on_my_language_changed(self, index):
+        """我的语言变更事件"""
+        if self.is_loading_config:
+            return
+
+        new_language = self.my_language_combo.itemText(index)
+        if not new_language or new_language == self.my_language:
+            return
+
+        # 检查是否与会议语言相同
+        if new_language == self.meeting_language:
+            Out.user_alert(message="我的语言不能与会议语言相同", title="语言设置错误")
+            # 回滚到原来的语言
+            for i in range(self.my_language_combo.count()):
+                if self.my_language_combo.itemText(i) == self.my_language:
+                    self.my_language_combo.setCurrentIndex(i)
+                    return
+
+        old_language = self.my_language
+        self.my_language = new_language
+        self.config_manager.set_my_language(new_language)
+
+        # 更新可用的 providers
+        self._update_available_providers()
+
+        Out.status(f"我的语言: {old_language} -> {new_language}")
+
+    def on_meeting_language_changed(self, index):
+        """会议语言变更事件"""
+        if self.is_loading_config:
+            return
+
+        new_language = self.meeting_language_combo.itemText(index)
+        if not new_language or new_language == self.meeting_language:
+            return
+
+        # 检查是否与我的语言相同
+        if new_language == self.my_language:
+            Out.user_alert(message="会议语言不能与我的语言相同", title="语言设置错误")
+            # 回滚到原来的语言
+            for i in range(self.meeting_language_combo.count()):
+                if self.meeting_language_combo.itemText(i) == self.meeting_language:
+                    self.meeting_language_combo.setCurrentIndex(i)
+                    return
+
+        old_language = self.meeting_language
+        self.meeting_language = new_language
+        self.config_manager.set_meeting_language(new_language)
+
+        # 更新可用的 providers
+        self._update_available_providers()
+
+        Out.status(f"会议语言: {old_language} -> {new_language}")
+
+    def _get_language_code(self, language_name: str) -> str:
+        """将语言名称转换为语言代码"""
+        from translation_client_factory import TranslationClientFactory
+
+        # 从任意 provider 获取语言映射
+        for provider in ["aliyun", "openai", "doubao"]:
+            languages = TranslationClientFactory.get_supported_languages(provider)
+            if language_name in languages:
+                return languages[language_name]
+
+        # 默认返回中文
+        return "zh"
+
+    def _update_available_providers(self):
+        """根据选择的语言更新可用的 providers"""
+        from translation_client_factory import TranslationClientFactory
+
+        my_lang_code = self._get_language_code(self.my_language)
+        meeting_lang_code = self._get_language_code(self.meeting_language)
+
+        # 获取支持该语言对的 providers
+        available_providers = TranslationClientFactory.get_available_providers_for_languages(
+            my_lang_code, meeting_lang_code
+        )
+
+        # 更新 S2T provider combo
+        self._update_provider_combo(self.s2t_provider_combo, available_providers)
+
+        # 更新 S2S provider combo
+        self._update_provider_combo(self.s2s_provider_combo, available_providers)
+
+        # 如果当前 provider 不在可用列表中，切换到第一个可用的
+        if self.s2t_provider not in available_providers and available_providers:
+            new_provider = available_providers[0]
+            self.s2t_provider = new_provider
+            self.config_manager.set_s2t_provider(new_provider)
+            # 更新 combo 选择
+            for i in range(self.s2t_provider_combo.count()):
+                if self.s2t_provider_combo.itemData(i) == new_provider:
+                    self.s2t_provider_combo.setCurrentIndex(i)
+                    break
+            Out.status(f"S2T provider 已切换到: {new_provider}")
+
+        if self.s2s_provider not in available_providers and available_providers:
+            new_provider = available_providers[0]
+            self.s2s_provider = new_provider
+            self.config_manager.set_s2s_provider(new_provider)
+            # 更新 combo 选择
+            for i in range(self.s2s_provider_combo.count()):
+                if self.s2s_provider_combo.itemData(i) == new_provider:
+                    self.s2s_provider_combo.setCurrentIndex(i)
+                    break
+            Out.status(f"S2S provider 已切换到: {new_provider}")
+
+    def _update_provider_combo(self, combo: QComboBox, available_providers: list):
+        """
+        更新 provider combo 的可用状态
+        不可用的选项会显示为灰色并添加"(不支持)"标签
+        """
+        model = combo.model()
+
+        # Provider 的原始显示文本（不含标签）
+        original_texts = {
+            "aliyun": "阿里云 Qwen (Alibaba Cloud)",
+            "openai": "OpenAI Realtime",
+            "doubao": "豆包 Doubao (ByteDance)"
+        }
+
+        for i in range(combo.count()):
+            provider = combo.itemData(i)
+            if not provider:
+                continue
+
+            original_text = original_texts.get(provider, combo.itemText(i))
+
+            if provider not in available_providers:
+                # 不可用：添加标签，设置灰色，禁用
+                new_text = f"{original_text} ⚠️ 不支持当前语言"
+                combo.setItemText(i, new_text)
+
+                # 禁用选项
+                item = model.item(i)
+                if item:
+                    flags = item.flags()
+                    item.setFlags(flags & ~Qt.ItemIsEnabled)
+                    # 设置灰色文字
+                    item.setForeground(QBrush(QColor(128, 128, 128)))
+
+            else:
+                # 可用：移除标签（如果有），启用，正常颜色
+                combo.setItemText(i, original_text)
+
+                # 启用选项
+                item = model.item(i)
+                if item:
+                    flags = item.flags()
+                    item.setFlags(flags | Qt.ItemIsEnabled)
+                    # 恢复正常颜色（黑色）
+                    item.setForeground(QBrush(QColor(0, 0, 0)))
 
     # ===== S2T 事件处理 =====
 
@@ -802,12 +1032,35 @@ class MeetingTranslatorApp(QWidget):
         Out.status("开始加载上次保存的配置...")
 
         # 显示所有配置项
+        Out.status(f"  我的语言: {self.config_manager.get_my_language()}")
+        Out.status(f"  会议语言: {self.config_manager.get_meeting_language()}")
         Out.status(f"  S2T Provider: {self.config_manager.get_s2t_provider()}")
         Out.status(f"  S2T 设备: {self.config_manager.get_s2t_listen_device_display() or '未设置'}")
         Out.status(f"  S2S Provider: {self.config_manager.get_s2s_provider()}")
         Out.status(f"  S2S 输入: {self.config_manager.get_s2s_input_device_display() or '未设置'}")
         Out.status(f"  S2S 输出: {self.config_manager.get_s2s_output_device_display() or '未设置'}")
         Out.status(f"  S2S 音色: {self.config_manager.get_s2s_voice()}")
+
+        # 0. 恢复语言设置
+        saved_my_lang = self.config_manager.get_my_language()
+        saved_meeting_lang = self.config_manager.get_meeting_language()
+
+        for i in range(self.my_language_combo.count()):
+            if self.my_language_combo.itemText(i) == saved_my_lang:
+                self.my_language_combo.setCurrentIndex(i)
+                self.my_language = saved_my_lang
+                Out.status(f"✓ 恢复我的语言: {saved_my_lang}")
+                break
+
+        for i in range(self.meeting_language_combo.count()):
+            if self.meeting_language_combo.itemText(i) == saved_meeting_lang:
+                self.meeting_language_combo.setCurrentIndex(i)
+                self.meeting_language = saved_meeting_lang
+                Out.status(f"✓ 恢复会议语言: {saved_meeting_lang}")
+                break
+
+        # 更新可用的 providers（基于语言设置）
+        self._update_available_providers()
 
         # 1. 恢复 S2T Provider
         saved_s2t_provider = self.config_manager.get_s2t_provider()
@@ -911,11 +1164,14 @@ class MeetingTranslatorApp(QWidget):
             # 2. 添加 SubtitleHandler
             self._update_subtitle_handler()
 
-            # 3. 启动翻译服务（英→中，仅字幕）
+            # 3. 启动翻译服务（会议语言→我的语言，仅字幕）
+            my_lang_code = self._get_language_code(self.my_language)
+            meeting_lang_code = self._get_language_code(self.meeting_language)
+
             self.s2t_translation_service = MeetingTranslationServiceWrapper(
                 api_key=None,
-                source_language="en",
-                target_language="zh",
+                source_language=meeting_lang_code,  # 会议语言
+                target_language=my_lang_code,  # 我的语言
                 audio_enabled=False,
                 provider=self.s2t_provider
             )
@@ -1005,10 +1261,10 @@ class MeetingTranslatorApp(QWidget):
         output_device = self.s2s_output_combo.currentData()
 
         if not input_device:
-            Out.user_alert("请先选择中文麦克风", "设备未选择")
+            Out.user_alert(f"请先选择{self.my_language}麦克风", "设备未选择")
             return
         if not output_device:
-            Out.user_alert("请先选择英文虚拟麦克风输出设备", "设备未选择")
+            Out.user_alert(f"请先选择{self.meeting_language}虚拟麦克风输出设备", "设备未选择")
             return
 
         try:
@@ -1029,13 +1285,15 @@ class MeetingTranslatorApp(QWidget):
             )
             self.s2s_audio_output.start()
 
-            # 2. 启动翻译服务（中→英，音频输出）
+            # 2. 启动翻译服务（我的语言→会议语言，音频输出）
             selected_voice = self.s2s_voice_combo.currentData()
+            my_lang_code = self._get_language_code(self.my_language)
+            meeting_lang_code = self._get_language_code(self.meeting_language)
 
             self.s2s_translation_service = MeetingTranslationServiceWrapper(
                 api_key=None,
-                source_language="zh",
-                target_language="en",
+                source_language=my_lang_code,  # 我的语言
+                target_language=meeting_lang_code,  # 会议语言
                 audio_enabled=True,
                 voice=selected_voice,
                 provider=self.s2s_provider,

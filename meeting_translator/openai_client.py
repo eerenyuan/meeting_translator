@@ -83,6 +83,7 @@ class OpenAIClient(BaseTranslationClient):
         "意大利语": "it",
         "葡萄牙语": "pt",
         "俄语": "ru",
+        "粤语": "yue",
     }
 
     # 支持的音色列表

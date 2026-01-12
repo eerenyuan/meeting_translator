@@ -69,14 +69,6 @@ class DoubaoClient(BaseTranslationClient):
     SUPPORTED_LANGUAGES = {
         "中文": "zh",
         "英语": "en",
-        "日语": "ja",
-        "韩语": "ko",
-        "俄语": "ru",
-        "法语": "fr",
-        "德语": "de",
-        "西班牙语": "es",
-        "意大利语": "it",
-        "葡萄牙语": "pt",
     }
 
     # 豆包 AST API 使用 16kHz

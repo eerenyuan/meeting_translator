@@ -81,7 +81,7 @@ class QwenClient(BaseTranslationClient):
         "意大利语": "it",
         "韩语": "ko",
         "日语": "ja",
-        "粤语": "yue",
+        #"粤语": "yue",api只对一种小众音色支持粤语，就不折腾了。
     }
 
     def __init__(

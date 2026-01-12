@@ -165,6 +165,8 @@ class ConfigManager:
         """获取默认配置（v2.0 格式）"""
         return {
             "version": "2.0",
+            "my_language": "中文",
+            "meeting_language": "英语",
             "s2t": {
                 "provider": "aliyun",
                 "listen_device_display": None
@@ -210,6 +212,36 @@ class ConfigManager:
         self.config[key] = value
         if auto_save:
             self.save_config()
+
+    # ===== 语言配置 =====
+
+    def get_my_language(self) -> str:
+        """获取我的语言"""
+        return self.config.get("my_language", "中文")
+
+    def set_my_language(self, language: str):
+        """
+        设置我的语言
+
+        Args:
+            language: 语言名称（例如 "中文"、"英语"）
+        """
+        self.config["my_language"] = language
+        self.save_config()
+
+    def get_meeting_language(self) -> str:
+        """获取会议语言"""
+        return self.config.get("meeting_language", "英语")
+
+    def set_meeting_language(self, language: str):
+        """
+        设置会议语言
+
+        Args:
+            language: 语言名称（例如 "中文"、"英语"）
+        """
+        self.config["meeting_language"] = language
+        self.save_config()
 
     # ===== S2T 配置 =====
 
