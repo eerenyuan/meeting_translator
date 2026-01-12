@@ -77,16 +77,28 @@ class TranslationClientFactory:
             )
 
         elif provider == "openai":
-            # OpenAIClient: single class supports both S2S and S2T via audio_enabled flag
+            # OpenAIClient: S2S uses conversation API, S2T uses streaming transcription API
+            # Read optional model configurations from environment
+            openai_kwargs = dict(kwargs)
+
+            # S2T model configurations
+            transcribe_model = os.getenv("OPENAI_TRANSCRIBE_MODEL")
+            if transcribe_model:
+                openai_kwargs["transcribe_model"] = transcribe_model
+
+            translation_model = os.getenv("OPENAI_TRANSLATION_MODEL")
+            if translation_model:
+                openai_kwargs["translation_model"] = translation_model
+
             return OpenAIClient(
                 api_key=api_key,
                 source_language=source_language,
                 target_language=target_language,
                 voice=voice,
                 audio_enabled=audio_enabled,
-                audio_queue=audio_queue,  # 传入外部队列
-                glossary=glossary,  # 传入词汇表
-                **kwargs  # OpenAI 需要 model 参数
+                audio_queue=audio_queue,
+                glossary=glossary,
+                **openai_kwargs
             )
 
         elif provider == "doubao":
@@ -185,3 +197,25 @@ class TranslationClientFactory:
             "openai": "OpenAI Realtime API",
             "doubao": "Doubao (ByteDance)"
         }
+
+    @staticmethod
+    def get_input_sample_rate(provider: str) -> int:
+        """
+        Get required input audio sample rate for a provider
+
+        Args:
+            provider: Provider name (aliyun, openai, doubao)
+
+        Returns:
+            int: Required sample rate in Hz
+        """
+        provider = provider.lower() if provider else "aliyun"
+
+        # OpenAI uses 24kHz, others use 16kHz
+        sample_rates = {
+            "aliyun": 16000,
+            "alibaba": 16000,
+            "openai": 24000,
+            "doubao": 16000,
+        }
+        return sample_rates.get(provider, 16000)

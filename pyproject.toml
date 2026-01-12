@@ -25,10 +25,17 @@ doubao = [
     "protobuf>=4.25.1",
 ]
 
+# OpenAI provider dependencies (Realtime API & GPT Translation)
+# OpenAI 提供商依赖（实时 API 和 GPT 翻译）
+openai = [
+    "openai>=1.0.0",
+]
+
 # All providers (install all optional dependencies)
 # 所有提供商（安装所有可选依赖）
 all = [
     "protobuf>=4.25.1",
+    "openai>=1.0.0",
 ]
 
 # Note: pyaudiowpatch (Windows WASAPI support) must be installed manually on Windows

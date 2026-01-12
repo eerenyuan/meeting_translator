@@ -34,6 +34,7 @@ from audio_device_manager import AudioDeviceManager
 from audio_capture_thread import AudioCaptureThread
 from audio_output_thread import AudioOutputThread
 from translation_service import MeetingTranslationServiceWrapper
+from translation_client_factory import TranslationClientFactory
 from subtitle_window import SubtitleWindow
 from config_manager import ConfigManager
 from output_manager import Out, MessageType
@@ -913,14 +914,18 @@ class MeetingTranslatorApp(QWidget):
             device_sample_rate = device['sample_rate']
             device_channels = device['channels']
 
+            # 获取该 provider 需要的输入采样率
+            target_sample_rate = TranslationClientFactory.get_input_sample_rate(self.s2t_provider)
+
             Out.status(f"S2T 设备: {device['name']}, {device_sample_rate}Hz, {device_channels}声道")
+            Out.status(f"S2T 目标采样率: {target_sample_rate}Hz (provider={self.s2t_provider})")
 
             self.s2t_audio_capture = AudioCaptureThread(
                 device_index=device['index'],
                 on_audio_chunk=self.s2t_translation_service.send_audio_chunk,
                 sample_rate=device_sample_rate,
                 channels=device_channels,
-                target_sample_rate=16000,
+                target_sample_rate=target_sample_rate,
                 target_channels=1
             )
             self.s2t_audio_capture.start()
@@ -1031,16 +1036,20 @@ class MeetingTranslatorApp(QWidget):
             input_sample_rate = input_device['sample_rate']
             input_channels = input_device['channels']
 
+            # 获取该 provider 需要的输入采样率
+            s2s_target_sample_rate = TranslationClientFactory.get_input_sample_rate(self.s2s_provider)
+
             Out.status(f"S2S 输入: {input_device['name']}, {input_sample_rate}Hz, {input_channels}声道")
             Out.status(f"S2S 输出: {output_device['name']}")
             Out.status(f"S2S 音色: {selected_voice}")
+            Out.status(f"S2S 目标采样率: {s2s_target_sample_rate}Hz (provider={self.s2s_provider})")
 
             self.s2s_audio_capture = AudioCaptureThread(
                 device_index=input_device['index'],
                 on_audio_chunk=self.s2s_translation_service.send_audio_chunk,
                 sample_rate=input_sample_rate,
                 channels=input_channels,
-                target_sample_rate=16000,
+                target_sample_rate=s2s_target_sample_rate,
                 target_channels=1
             )
             self.s2s_audio_capture.start()
