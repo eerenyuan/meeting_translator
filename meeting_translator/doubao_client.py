@@ -8,6 +8,7 @@ using Doubao's AST (Automatic Simultaneous Translation) API
 
 import os
 import sys
+import time
 import uuid
 import asyncio
 import websockets
@@ -61,6 +62,22 @@ class DoubaoClient(BaseTranslationClient):
 
     # 类属性，用于识别 provider
     provider = TranslationProvider.DOUBAO
+
+    # 支持的语言列表
+    # 来源：https://www.volcengine.com/docs/6561/1756902?lang=zh
+    # Key: 显示名称, Value: 语种代码
+    SUPPORTED_LANGUAGES = {
+        "中文": "zh",
+        "英语": "en",
+        "日语": "ja",
+        "韩语": "ko",
+        "俄语": "ru",
+        "法语": "fr",
+        "德语": "de",
+        "西班牙语": "es",
+        "意大利语": "it",
+        "葡萄牙语": "pt",
+    }
 
     # 豆包 AST API 使用 16kHz
     AUDIO_RATE = 16000
@@ -167,6 +184,15 @@ class DoubaoClient(BaseTranslationClient):
             因此不支持手动选择音色。
         """
         return {}
+
+    @classmethod
+    def get_supported_languages(cls) -> Dict[str, str]:
+        """获取支持的语言列表
+
+        Returns:
+            Dict[str, str]: 显示名称 -> 语种代码
+        """
+        return cls.SUPPORTED_LANGUAGES.copy()
 
     @staticmethod
     def check_dependencies() -> tuple[bool, str]:
@@ -374,3 +400,137 @@ class DoubaoClient(BaseTranslationClient):
                 self.output_debug("WebSocket 已关闭")
             except Exception as e:
                 self.output_warning(f"关闭 WebSocket 时出错: {e}")
+
+    def generate_sample_file(
+        self,
+        input_wav_path: str,
+        output_wav_path: str
+    ) -> str:
+        """
+        生成音色样本文件（Doubao 实现）
+
+        使用输入音频文件通过 S2S 模式生成翻译后的音频样本。
+        使用 client 已配置的源语言和目标语言。
+
+        Args:
+            input_wav_path: 输入 wav 文件路径
+            output_wav_path: 输出 wav 文件路径
+
+        Returns:
+            str: 生成的音频文件路径，如果失败则返回空字符串
+        """
+        from pathlib import Path
+        import asyncio
+        import base64
+
+        input_path = Path(input_wav_path)
+        output_path = Path(output_wav_path)
+
+        # 检查输入文件是否存在
+        if not input_path.exists():
+            return ""
+
+        # 如果输出文件已存在，直接返回
+        if output_path.exists():
+            return str(output_path)
+
+        # 异步生成音频
+        async def _generate():
+            try:
+                # 保存当前设置
+                original_audio_enabled = self.audio_enabled
+
+                # 强制使用 S2S 模式，保持当前语言配置
+                self.audio_enabled = True
+
+                # 连接（使用 client 已配置的语言，10秒超时）
+                await asyncio.wait_for(self.connect(), timeout=10.0)
+
+                # 读取输入音频文件（跳过 WAV header）
+                with open(input_path, 'rb') as f:
+                    # 跳过 WAV header (44 bytes)
+                    f.seek(44)
+                    audio_data = f.read()
+
+                # 分块发送音频
+                chunk_size = 100 * 1024  # 100KB
+                for i in range(0, len(audio_data), chunk_size):
+                    chunk = audio_data[i:i + chunk_size]
+                    await self.send_audio_chunk(chunk)
+
+                # 收集音频数据
+                audio_chunks = []
+                response_complete = False
+
+                # 直接处理消息循环（30秒总超时）
+                start_time = time.time()
+                try:
+                    while True:
+                        # 检查总超时
+                        if time.time() - start_time > 30:
+                            break
+
+                        # 接收消息（10秒单次超时，但不提前退出）
+                        try:
+                            message = await asyncio.wait_for(self.ws.recv(), timeout=10.0)
+                        except asyncio.TimeoutError:
+                            # 单次超时继续等待，直到总超时或收到完成事件
+                            continue
+                        try:
+                            response = TranslateResponse()
+                            response.ParseFromString(message)
+                            event_type = response.event
+
+
+
+                            # 收集音频输出
+                            if event_type == self.EVENT_AUDIO_DELTA and self.audio_enabled:
+                                audio_data = response.data
+                                if audio_data:
+                                    audio_chunks.append(audio_data)
+
+                            elif event_type == self.EVENT_AUDIO_DONE:
+                                response_complete = True
+                                continue #需要一直等30s
+
+                            elif event_type == "error":
+                                break
+
+                        except Exception:
+                            continue
+
+                except Exception:
+                    pass
+
+                # 合并音频并保存
+                if audio_chunks:
+                    full_audio = b''.join(audio_chunks)
+
+                    # 保存为 WAV 文件
+                    import wave
+                    output_path.parent.mkdir(parents=True, exist_ok=True)
+                    with wave.open(str(output_path), 'wb') as wf:
+                        wf.setnchannels(1)  # 单声道
+                        wf.setsampwidth(2)  # 16-bit = 2 bytes
+                        wf.setframerate(self.output_rate)
+                        wf.writeframes(full_audio)
+
+                    return str(output_path)
+                else:
+                    return ""
+
+            except Exception:
+                return ""
+            finally:
+                # 恢复原始设置
+                self.audio_enabled = original_audio_enabled
+                try:
+                    await self.close()
+                except:
+                    pass
+
+        # 运行异步任务
+        try:
+            return asyncio.run(_generate())
+        except (KeyboardInterrupt, Exception):
+            return ""

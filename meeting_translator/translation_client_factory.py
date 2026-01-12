@@ -185,6 +185,28 @@ class TranslationClientFactory:
             return {}
 
     @staticmethod
+    def get_supported_languages(provider: str) -> Dict[str, str]:
+        """
+        Get supported languages for a provider
+
+        Args:
+            provider: Provider name (aliyun, openai, doubao)
+
+        Returns:
+            Dict mapping display names to language codes
+        """
+        provider = provider.lower()
+
+        if provider == "aliyun" or provider == "alibaba":
+            return QwenClient.get_supported_languages()
+        elif provider == "openai":
+            return OpenAIClient.get_supported_languages()
+        elif provider == "doubao":
+            return DoubaoClient.get_supported_languages()
+        else:
+            return {}
+
+    @staticmethod
     def get_supported_providers() -> Dict[str, str]:
         """
         Get list of supported providers

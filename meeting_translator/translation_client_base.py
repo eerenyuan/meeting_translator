@@ -187,13 +187,20 @@ class BaseTranslationClient(OutputMixin, ABC):
         """
         return {}
 
-    def generate_voice_sample_file(self, voice: str, text: str = "This is a common phrase used in business meetings."):
+    def generate_sample_file(
+        self,
+        input_wav_path: str,
+        output_wav_path: str
+    ) -> str:
         """
-        生成音色样本文件（预录制，用于试听）
+        使用指定的音频文件生成翻译后的音频样本
+
+        使用输入音频文件通过 S2S 模式生成翻译后的音频样本。
+        可用于测试 voice 或 language 配置。
 
         Args:
-            voice: 音色ID（如 "cherry", "marin"）
-            text: 测试文本（默认为商务会议常用短语）
+            input_wav_path: 输入 wav 文件路径
+            output_wav_path: 输出 wav 文件路径
 
         Returns:
             str: 生成的音频文件路径，如果失败则返回空字符串
@@ -203,7 +210,7 @@ class BaseTranslationClient(OutputMixin, ABC):
             默认实现抛出 NotImplementedError。
         """
         raise NotImplementedError(
-            f"{self.__class__.__name__} 必须实现 generate_voice_sample_file() 方法"
+            f"{self.__class__.__name__} 必须实现 generate_sample_file() 方法"
         )
 
     def get_translation_mode(self) -> TranslationMode:

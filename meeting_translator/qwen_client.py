@@ -48,6 +48,7 @@ def build_translation_instructions(glossary: Dict[str, str]) -> str:
 class QwenClient(BaseTranslationClient):
     """
     阿里云 Qwen LiveTranslate 客户端
+    https://help.aliyun.com/zh/model-studio/qwen3-livetranslate-flash-realtime
 
     支持 S2S 和 S2T 两种模式：
     - S2S (audio_enabled=True): 语音输入 → 翻译 → 语音输出
@@ -64,6 +65,23 @@ class QwenClient(BaseTranslationClient):
     SUPPORTED_VOICES = {
         "cherry": "Cherry (女声)",
         "nofish": "Nofish (男声)",
+    }
+
+    # 支持的语言列表
+    # 来源：https://help.aliyun.com/zh/model-studio/qwen3-livetranslate-flash-realtime
+    # Key: 显示名称, Value: 语种代码
+    SUPPORTED_LANGUAGES = {
+        "英语": "en",
+        "中文": "zh",
+        "俄语": "ru",
+        "法语": "fr",
+        "德语": "de",
+        "葡萄牙语": "pt",
+        "西班牙语": "es",
+        "意大利语": "it",
+        "韩语": "ko",
+        "日语": "ja",
+        "粤语": "yue",
     }
 
     def __init__(
@@ -123,6 +141,15 @@ class QwenClient(BaseTranslationClient):
     def get_supported_voices(cls) -> Dict[str, str]:
         """获取支持的音色列表"""
         return cls.SUPPORTED_VOICES.copy()
+
+    @classmethod
+    def get_supported_languages(cls) -> Dict[str, str]:
+        """获取支持的语言列表
+
+        Returns:
+            Dict[str, str]: 显示名称 -> 语种代码
+        """
+        return cls.SUPPORTED_LANGUAGES.copy()
 
     async def connect(self):
         """建立 WebSocket 连接"""
@@ -291,35 +318,37 @@ class QwenClient(BaseTranslationClient):
 
         self.output_status("连接已关闭")
 
-    def generate_voice_sample_file(self, voice: str, text: str = "This is a common phrase used in business meetings."):
+    def generate_sample_file(
+        self,
+        input_wav_path: str,
+        output_wav_path: str
+    ) -> str:
         """
         生成音色样本文件（Qwen 实现）
 
-        使用标准音频输入文件通过 S2S 模式生成音色样本。
+        使用输入音频文件通过 S2S 模式生成翻译后的音频样本。
+        使用 client 已配置的源语言和目标语言。
 
         Args:
-            voice: 音色ID（如 "cherry", "nofish"）
-            text: 测试文本（未使用，使用预录制的音频文件）
+            input_wav_path: 输入 wav 文件路径
+            output_wav_path: 输出 wav 文件路径
 
         Returns:
             str: 生成的音频文件路径，如果失败则返回空字符串
         """
         from pathlib import Path
-        from paths import VOICE_SAMPLES_DIR, ASSETS_DIR
         import asyncio
 
-        # 生成文件名：qwen_{voice}.wav
-        filename = f"qwen_{voice}.wav"
-        filepath = VOICE_SAMPLES_DIR / filename
+        input_path = Path(input_wav_path)
+        output_path = Path(output_wav_path)
 
-        # 如果文件已存在，直接返回
-        if filepath.exists():
-            return str(filepath)
-
-        # 检查标准音频文件是否存在
-        standard_audio = ASSETS_DIR / "voice_sample_input_16k.wav"
-        if not standard_audio.exists():
+        # 检查输入文件是否存在
+        if not input_path.exists():
             return ""
+
+        # 如果输出文件已存在，直接返回
+        if output_path.exists():
+            return str(output_path)
 
         # 异步生成音频
         async def _generate():
@@ -327,14 +356,16 @@ class QwenClient(BaseTranslationClient):
                 # 保存当前设置
                 original_voice = self.voice
                 original_audio_enabled = self.audio_enabled
-                self.voice = voice
-                self.audio_enabled = True  # 强制使用 S2S 模式
 
-                # 连接（connect() 内部会调用 configure_session()）
-                await self.connect()
+                # 强制使用 S2S 模式，保持当前语言配置
+                self.voice = original_voice  # 保持当前 voice
+                self.audio_enabled = True
 
-                # 读取标准音频文件（跳过 WAV header）
-                with open(standard_audio, 'rb') as f:
+                # 连接（使用 client 已配置的语言，10秒超时）
+                await asyncio.wait_for(self.connect(), timeout=10.0)
+
+                # 读取输入音频文件（跳过 WAV header）
+                with open(input_path, 'rb') as f:
                     # 跳过 WAV header (44 bytes)
                     f.seek(44)
                     audio_data = f.read()
@@ -349,9 +380,20 @@ class QwenClient(BaseTranslationClient):
                 audio_chunks = []
                 response_complete = False
 
-                # 直接处理消息循环
+                # 直接处理消息循环（30秒总超时）
+                start_time = time.time()
                 try:
-                    async for message in self.ws:
+                    while True:
+                        # 检查总超时
+                        if time.time() - start_time > 30:
+                            break
+
+                        # 接收消息（10秒单次超时，但不提前退出）
+                        try:
+                            message = await asyncio.wait_for(self.ws.recv(), timeout=10.0)
+                        except asyncio.TimeoutError:
+                            # 单次超时继续等待，直到总超时或收到完成事件
+                            continue
                         try:
                             event = json.loads(message)
                             event_type = event.get("type", "")
@@ -364,9 +406,9 @@ class QwenClient(BaseTranslationClient):
                                     audio_chunks.append(audio_data)
 
                             elif event_type == "response.done":
-                                # 响应完成
-                                response_complete = True
-                                break
+                                # 不要提前退出，等够时间
+                                continue 
+                                
 
                             elif event_type == "error":
                                 # 错误，退出
@@ -377,10 +419,6 @@ class QwenClient(BaseTranslationClient):
                         except Exception:
                             continue
 
-                        # 如果已经完成，退出
-                        if response_complete:
-                            break
-
                 except Exception:
                     pass
 
@@ -390,14 +428,14 @@ class QwenClient(BaseTranslationClient):
 
                     # 保存为 WAV 文件
                     import wave
-                    filepath.parent.mkdir(parents=True, exist_ok=True)
-                    with wave.open(str(filepath), 'wb') as wf:
+                    output_path.parent.mkdir(parents=True, exist_ok=True)
+                    with wave.open(str(output_path), 'wb') as wf:
                         wf.setnchannels(1)  # 单声道
                         wf.setsampwidth(2)  # 16-bit = 2 bytes
                         wf.setframerate(self.output_rate)
                         wf.writeframes(full_audio)
 
-                    return str(filepath)
+                    return str(output_path)
                 else:
                     return ""
 
@@ -414,11 +452,7 @@ class QwenClient(BaseTranslationClient):
 
         # 运行异步任务
         try:
-            # 每次都创建新的事件循环，避免使用已关闭的循环
-            import concurrent.futures
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                future = executor.submit(asyncio.run, _generate())
-                return future.result(timeout=40)  # 40秒超时
-        except Exception:
+            return asyncio.run(_generate())
+        except (KeyboardInterrupt, Exception):
             return ""
 

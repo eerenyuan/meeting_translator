@@ -126,9 +126,9 @@ class MeetingTranslatorApp(QWidget):
         init_message = get_initialization_message()
         if init_message:
             # 显示迁移信息
-            print("\n" + "="*60)
-            print(init_message)
-            print("="*60 + "\n")
+            Out.status("\n" + "="*60)
+            Out.status(init_message)
+            Out.status("="*60 + "\n")
 
     def _init_output_manager(self):
         log_file = os.path.join(LOGS_DIR, f"translator_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
@@ -860,24 +860,35 @@ class MeetingTranslatorApp(QWidget):
         Out.warning(f"⚠ 未找到{device_type}: {device_display}")
 
     def _check_and_generate_voice_samples(self):
-        """检查并生成缺失的音色样本文件"""
+        """检查并生成所有 provider 的缺失音色样本文件"""
         from translation_client_factory import TranslationClientFactory
         from voice_sample_generator import generate_provider_samples
 
+        # 需要检测音色的 providers（Doubao 没有音色概念）
+        providers_to_check = ["aliyun", "openai"]
+
         try:
-            provider = self.config_manager.get_s2s_provider()
+            for provider in providers_to_check:
+                try:
+                    Out.status(f"检查 {provider} 音色样本...")
 
-            if provider == "doubao":
-                return
+                    supported_voices = TranslationClientFactory.get_supported_voices(provider)
+                    if not supported_voices:
+                        Out.status(f"  [SKIP] {provider} 没有支持的音色")
+                        continue
 
-            supported_voices = TranslationClientFactory.get_supported_voices(provider)
-            if not supported_voices:
-                return
+                    # 生成缺失的音色样本
+                    generate_provider_samples(provider, TranslationClientFactory, supported_voices)
 
-            generate_provider_samples(provider, TranslationClientFactory, supported_voices)
+                except Exception as e:
+                    Out.error(f" {provider} 音色样本检查失败: {e}")
+                    import traceback
+                    traceback.print_exc()
 
         except Exception as e:
-            print(f"检查音色样本时出错: {e}\n")
+            Out.error(f"检查音色样本时出错: {e}\n")
+            import traceback
+            traceback.print_exc()
 
     # ===== S2T 服务管理 =====
 

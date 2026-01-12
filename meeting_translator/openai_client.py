@@ -69,6 +69,22 @@ class OpenAIClient(BaseTranslationClient):
     # OpenAI Realtime API 使用 24kHz（输入和输出）
     AUDIO_RATE = 24000
 
+    # 支持的语言列表
+    # 来源：https://platform.openai.com/docs/guides/realtime
+    # Key: 显示名称, Value: 语种代码
+    SUPPORTED_LANGUAGES = {
+        "英语": "en",
+        "中文": "zh",
+        "日语": "ja",
+        "韩语": "ko",
+        "西班牙语": "es",
+        "法语": "fr",
+        "德语": "de",
+        "意大利语": "it",
+        "葡萄牙语": "pt",
+        "俄语": "ru",
+    }
+
     # 支持的音色列表
     SUPPORTED_VOICES = {
         "alloy": "Alloy (中性)",
@@ -178,9 +194,12 @@ class OpenAIClient(BaseTranslationClient):
             "zh": "Chinese",
             "ja": "Japanese",
             "ko": "Korean",
+            "es": "Spanish",
             "fr": "French",
             "de": "German",
-            "es": "Spanish"
+            "it": "Italian",
+            "pt": "Portuguese",
+            "ru": "Russian"
         }
 
     @property
@@ -197,6 +216,15 @@ class OpenAIClient(BaseTranslationClient):
     def get_supported_voices(cls) -> Dict[str, str]:
         """获取支持的音色列表"""
         return cls.SUPPORTED_VOICES.copy()
+
+    @classmethod
+    def get_supported_languages(cls) -> Dict[str, str]:
+        """获取支持的语言列表
+
+        Returns:
+            Dict[str, str]: 显示名称 -> 语种代码
+        """
+        return cls.SUPPORTED_LANGUAGES.copy()
 
     def _get_api_url(self) -> str:
         """根据模式返回不同的 API URL"""
@@ -716,32 +744,51 @@ Use this for continuity."""
             except Exception as e:
                 self.output_warning(f"关闭 WebSocket 时出错: {e}")
 
-    def generate_voice_sample_file(self, voice: str, text: str = "This is a common phrase used in business meetings."):
+    def generate_sample_file(
+        self,
+        input_wav_path: str,
+        output_wav_path: str
+    ) -> str:
         """
         生成音色样本文件（OpenAI 实现）
+
+        使用输入音频文件通过 S2S 模式生成翻译后的音频样本。
+        使用 client 已配置的源语言和目标语言。
+
+        Args:
+            input_wav_path: 输入 wav 文件路径
+            output_wav_path: 输出 wav 文件路径
+
+        Returns:
+            str: 生成的音频文件路径，如果失败则返回空字符串
         """
         from pathlib import Path
-        from paths import VOICE_SAMPLES_DIR, ASSETS_DIR
 
-        filename = f"openai_{voice}.wav"
-        filepath = VOICE_SAMPLES_DIR / filename
+        input_path = Path(input_wav_path)
+        output_path = Path(output_wav_path)
 
-        if filepath.exists():
-            return str(filepath)
-
-        standard_audio = ASSETS_DIR / "voice_sample_input_24k.wav"
-        if not standard_audio.exists():
+        # 检查输入文件是否存在
+        if not input_path.exists():
             return ""
+
+        # 如果输出文件已存在，直接返回
+        if output_path.exists():
+            return str(output_path)
 
         async def _generate():
             try:
+                # 保存当前设置
                 original_voice = self.voice
                 original_audio_enabled = self.audio_enabled
-                self.voice = voice
+
+                # 强制使用 S2S 模式，保持当前语言配置
+                self.voice = original_voice
                 self.audio_enabled = True
 
-                await self.connect()
+                # 连接（使用 client 已配置的语言，10秒超时）
+                await asyncio.wait_for(self.connect(), timeout=10.0)
 
+                # 构建翻译指令
                 instructions = self._build_s2s_instructions()
                 sample_config = {
                     "type": "session.update",
@@ -763,8 +810,9 @@ Use this for continuity."""
                 }
                 await self.ws.send(json.dumps(sample_config))
 
-                with open(standard_audio, 'rb') as f:
-                    f.seek(44)
+                # 读取输入音频文件
+                with open(input_path, 'rb') as f:
+                    f.seek(44)  # 跳过 WAV header
                     audio_data = f.read()
 
                 audio_chunks = []
@@ -785,8 +833,7 @@ Use this for continuity."""
                                         audio_chunks.append(chunk_data)
 
                                 elif event_type == "response.done":
-                                    response_complete = True
-                                    break
+                                    continue 
 
                                 elif event_type == "error":
                                     break
@@ -814,6 +861,7 @@ Use this for continuity."""
                     if chunk_count % 3 == 0 and i + chunk_size < len(audio_data):
                         await asyncio.sleep(0.1)
 
+                # 发送静音触发结束
                 import struct
                 silence_duration = 2.0
                 silence_samples = int(self.output_rate * silence_duration)
@@ -833,20 +881,21 @@ Use this for continuity."""
                     full_audio = b''.join(audio_chunks)
 
                     import wave
-                    filepath.parent.mkdir(parents=True, exist_ok=True)
-                    with wave.open(str(filepath), 'wb') as wf:
+                    output_path.parent.mkdir(parents=True, exist_ok=True)
+                    with wave.open(str(output_path), 'wb') as wf:
                         wf.setnchannels(1)
                         wf.setsampwidth(2)
                         wf.setframerate(self.output_rate)
                         wf.writeframes(full_audio)
 
-                    return str(filepath)
+                    return str(output_path)
                 else:
                     return ""
 
             except Exception:
                 return ""
             finally:
+                # 恢复原始设置
                 self.voice = original_voice
                 self.audio_enabled = original_audio_enabled
                 try:
@@ -855,9 +904,6 @@ Use this for continuity."""
                     pass
 
         try:
-            import concurrent.futures
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                future = executor.submit(asyncio.run, _generate())
-                return future.result(timeout=40)
-        except Exception:
+            return asyncio.run(_generate())
+        except (KeyboardInterrupt, Exception):
             return ""

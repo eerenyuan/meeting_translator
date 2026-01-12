@@ -31,8 +31,15 @@ class VoiceSampleGenerator:
         self.client_factory = client_factory
 
     def get_audio_input_path(self) -> Path:
-        """获取标准音频输入文件路径"""
-        if self.provider in ["aliyun", "alibaba"]:
+        """
+        获取标准音频输入文件路径
+
+        根据不同 provider 返回对应采样率的输入文件：
+        - Aliyun/Qwen: 16kHz
+        - OpenAI: 24kHz
+        - Doubao: 16kHz
+        """
+        if self.provider in ["aliyun", "alibaba", "doubao"]:
             return ASSETS_DIR / "voice_sample_input_16k.wav"
         elif self.provider == "openai":
             return ASSETS_DIR / "voice_sample_input_24k.wav"
@@ -76,6 +83,16 @@ class VoiceSampleGenerator:
             bool: 是否成功生成
         """
         try:
+            # 构建输出文件路径
+            provider_prefix = {
+                "aliyun": "qwen",
+                "alibaba": "qwen",
+                "openai": "openai"
+            }.get(self.provider, self.provider)
+
+            filename = f"{provider_prefix}_{voice_id}.wav"
+            filepath = VOICE_SAMPLES_DIR / filename
+
             # 创建临时 client
             client = self.client_factory.create_client(
                 provider=self.provider,
@@ -86,9 +103,12 @@ class VoiceSampleGenerator:
             )
 
             # 调用 client 的生成方法
-            filepath = client.generate_voice_sample_file(voice_id)
+            result_path = client.generate_sample_file(
+                input_wav_path=str(self.get_audio_input_path()),
+                output_wav_path=str(filepath)
+            )
 
-            if filepath:
+            if result_path:
                 return True
             else:
                 print(f"  [FAIL] {voice_id} (文件未生成)")
