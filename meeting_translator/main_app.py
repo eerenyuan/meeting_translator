@@ -707,13 +707,14 @@ class MeetingTranslatorApp(QWidget):
 
     def load_devices(self):
         """加载音频设备列表"""
-        # 1. 加载 S2T 设备（会议音频输入）
-        speaker_devices = self.device_manager.get_real_speakers()
+        # 1. 加载 S2T 设备（会议音频输入）- 支持所有输入设备
+        all_input_devices = self.device_manager.get_input_devices(include_voicemeeter=False, deduplicate=True)
         self.s2t_device_combo.clear()
 
-        for device in speaker_devices:
+        for device in all_input_devices:
             display_name = device.get('display_name', device['name'])
-            if device.get('is_wasapi_loopback'):
+            # 标记 loopback 设备为推荐（用于捕获系统音频）
+            if device.get('is_loopback'):
                 display_name += " [推荐]"
             self.s2t_device_combo.addItem(display_name, device)
 
