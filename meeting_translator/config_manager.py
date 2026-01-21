@@ -17,7 +17,7 @@ class ConfigManager:
     """配置管理器（支持自动验证和修复）"""
 
     # 配置格式版本（用于验证和迁移）
-    CONFIG_VERSION = "2.0"
+    CONFIG_VERSION = "2.1"
 
     def __init__(self, config_file: Optional[str] = None):
         """
@@ -49,13 +49,23 @@ class ConfigManager:
             with open(self.config_file, 'r', encoding='utf-8') as f:
                 config = json.load(f)
 
-            # 检查版本
-            if config.get('version') != self.CONFIG_VERSION:
-                Out.warning(f"配置版本不匹配 (当前: {config.get('version')}, 期望: {self.CONFIG_VERSION})")
-                # 备份旧配置
-                self._backup_config()
-                # 返回默认配置
-                return self._get_default_config()
+            # 检查版本并进行迁移
+            current_version = config.get('version')
+            if current_version != self.CONFIG_VERSION:
+                # 尝试从 2.0 迁移到 2.1
+                if current_version == "2.0":
+                    Out.status(f"检测到配置版本 2.0，正在迁移到 2.1...")
+                    config = self._migrate_v20_to_v21(config)
+                    # 保存迁移后的配置
+                    self.config = config
+                    self.save_config()
+                    Out.status("配置迁移完成")
+                else:
+                    Out.warning(f"配置版本不匹配 (当前: {current_version}, 期望: {self.CONFIG_VERSION})")
+                    # 备份旧配置
+                    self._backup_config()
+                    # 返回默认配置
+                    return self._get_default_config()
 
             # 验证配置格式
             if not self._validate_config(config):
@@ -89,6 +99,13 @@ class ConfigManager:
             True: 格式正确
             False: 格式不正确
         """
+        # 检查 lang 字段（可选，v2.1+）
+        if "lang" in config:
+            lang = config["lang"]
+            if not isinstance(lang, str):
+                Out.warning("配置中 lang 字段必须是字符串")
+                return False
+
         # 检查 s2t 部分
         if "s2t" in config:
             s2t = config["s2t"]
@@ -161,10 +178,34 @@ class ConfigManager:
         except Exception as e:
             Out.error(f"备份配置文件失败: {e}")
 
+    def _migrate_v20_to_v21(self, config: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        从配置版本 2.0 迁移到 2.1
+
+        Changes:
+        - 添加 lang 字段（默认 zh_CN）
+        - 更新版本号到 2.1
+
+        Args:
+            config: v2.0 格式的配置
+
+        Returns:
+            v2.1 格式的配置
+        """
+        # 添加 lang 字段（默认为中文）
+        config["lang"] = "zh_CN"
+
+        # 更新版本号
+        config["version"] = "2.1"
+
+        Out.status("配置已从 v2.0 迁移到 v2.1（添加语言设置）")
+        return config
+
     def _get_default_config(self) -> Dict[str, Any]:
-        """获取默认配置（v2.0 格式）"""
+        """获取默认配置（v2.1 格式）"""
         return {
-            "version": "2.0",
+            "version": "2.1",
+            "lang": "zh_CN",
             "my_language": "中文",
             "meeting_language": "英语",
             "s2t": {
@@ -214,6 +255,64 @@ class ConfigManager:
             self.save_config()
 
     # ===== 语言配置 =====
+
+    def get_lang(self) -> str:
+        """
+        获取界面语言设置
+
+        Returns:
+            语言代码 (zh_CN, en_US)
+        """
+        return self.config.get("lang", "zh_CN")
+
+    def set_lang(self, lang: str):
+        """
+        设置界面语言
+
+        支持多种格式:
+        - 完整代码: zh_CN, en_US, zh-CN, en-US
+        - 简写: zh, cn → zh_CN, en → en_US
+
+        Args:
+            lang: 语言代码
+        """
+        # 规范化语言代码
+        normalized_lang = self._normalize_language_code(lang)
+
+        self.config["lang"] = normalized_lang
+        self.save_config()
+
+    def _normalize_language_code(self, lang: str) -> str:
+        """
+        规范化语言代码
+
+        Args:
+            lang: 语言代码（任意格式）
+
+        Returns:
+            规范化后的语言代码 (zh_CN, en_US)
+        """
+        lang_lower = lang.lower().replace("-", "_")
+
+        # 简写映射
+        shorthand_map = {
+            "zh": "zh_CN",
+            "cn": "zh_CN",
+            "en": "en_US",
+        }
+
+        if lang_lower in shorthand_map:
+            return shorthand_map[lang_lower]
+
+        # 如果已经是完整格式 (zh_CN, en_US)，返回原样
+        if "_" in lang_lower:
+            parts = lang_lower.split("_")
+            if len(parts) == 2:
+                # 大写国家代码: zh_cn → zh_CN
+                return f"{parts[0]}_{parts[1].upper()}"
+
+        # 默认返回中文
+        return "zh_CN"
 
     def get_my_language(self) -> str:
         """获取我的语言"""

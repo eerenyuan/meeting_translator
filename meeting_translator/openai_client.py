@@ -86,7 +86,21 @@ class OpenAIClient(BaseTranslationClient):
         "粤语": "yue",
     }
 
-    # 支持的音色列表
+    # 音色元数据：voice_id -> (name, gender, recommended)
+    VOICE_METADATA = {
+        "alloy": ("Alloy", "neutral", False),
+        "ash": ("Ash", "male", False),
+        "ballad": ("Ballad", "male", False),
+        "cedar": ("Cedar", "neutral", True),
+        "coral": ("Coral", "female", False),
+        "echo": ("Echo", "male", False),
+        "marin": ("Marin", "neutral", True),
+        "sage": ("Sage", "female", False),
+        "shimmer": ("Shimmer", "female", False),
+        "verse": ("Verse", "male", False)
+    }
+
+    # 支持的音色列表（向后兼容，不使用 i18n）
     SUPPORTED_VOICES = {
         "alloy": "Alloy (中性)",
         "ash": "Ash (男声)",
@@ -219,6 +233,27 @@ class OpenAIClient(BaseTranslationClient):
         return cls.SUPPORTED_VOICES.copy()
 
     @classmethod
+    def get_supported_voices_i18n(cls, i18n) -> Dict[str, str]:
+        """
+        获取支持的音色列表（带 i18n 翻译）
+
+        Args:
+            i18n: I18n manager instance
+
+        Returns:
+            Dict[str, str]: voice_id -> 翻译后的显示名称
+        """
+        voices = {}
+        for voice_id, (name, gender, recommended) in cls.VOICE_METADATA.items():
+            gender_text = i18n.t(f"ui.voices.{gender}")
+            label = f"{name} ({gender_text})"
+            if recommended:
+                recommended_text = i18n.t("ui.voices.recommended")
+                label += f" ⭐ {recommended_text}"
+            voices[voice_id] = label
+        return voices
+
+    @classmethod
     def get_supported_languages(cls) -> Dict[str, str]:
         """获取支持的语言列表
 
@@ -316,12 +351,11 @@ class OpenAIClient(BaseTranslationClient):
             "language": lang,
         }
 
-        # Add prompt for better technical term recognition
-        if lang == "en":
-            transcription_config["prompt"] = (
-                "Technical terms: AI agent, Python, Jupyter notebook, CLI, API, "
-                "dev server, VPN, cluster, customer profile, JSON, YAML. "
-            )
+        # Add prompt for better technical term recognition, but this will create a lot of noise
+        # if lang == "en":
+        #     transcription_config["prompt"] = (
+        #         "Technical terms: AI agent, LLM, Python, Jupyter notebook"
+        #     )
 
         # For transcription intent: use transcription_session.update with session wrapper
         config = {

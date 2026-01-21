@@ -5,6 +5,7 @@
 
 import os
 from pathlib import Path
+from i18n import get_i18n
 
 
 # ========== 根目录 ==========
@@ -100,7 +101,9 @@ def migrate_legacy_files():
                         shutil.copy2(file, dst_file)
                         count += 1
                     except Exception as e:
-                        print(f"[WARN] 迁移文件失败 {file}: {e}")
+                        from i18n import get_i18n
+                        i18n = get_i18n()
+                        print(i18n.t("paths.migration_file_failed", file=str(file), error=str(e)))
 
         return count
 
@@ -129,28 +132,29 @@ def get_initialization_message():
     Returns:
         str: 初始化信息或空字符串
     """
+    i18n = get_i18n()
     messages = []
 
     # 检查是否是首次启动（新目录不存在）
     if not MEETING_TRANSLATOR_ROOT.exists():
-        messages.append(f"✨ 创建数据目录: {MEETING_TRANSLATOR_ROOT}")
+        messages.append(i18n.t("paths.creating_data_dir", path=str(MEETING_TRANSLATOR_ROOT)))
 
     # 检查是否需要迁移（只有在未迁移过且有旧文件时才显示）
     stats = migrate_legacy_files()
 
     if not stats['skipped'] and sum(stats.values()) > 0:
-        messages.append("📦 检测到旧版本数据，正在迁移...")
-        messages.append(f"✅ 迁移完成:")
+        messages.append(i18n.t("paths.migrating_legacy"))
+        messages.append(i18n.t("paths.migration_complete"))
         if stats['logs'] > 0:
-            messages.append(f"   - 日志文件: {stats['logs']} 个")
+            messages.append(i18n.t("paths.migration_logs", count=stats['logs']))
         if stats['config'] > 0:
-            messages.append(f"   - 配置文件: {stats['config']} 个")
+            messages.append(i18n.t("paths.migration_config", count=stats['config']))
         if stats['records'] > 0:
-            messages.append(f"   - 会议记录: {stats['records']} 个")
-        messages.append(f"\n旧文件仍然保留在:")
-        messages.append(f"- {LEGACY_LOGS_DIR}")
-        messages.append(f"- {LEGACY_CONFIG_DIR}")
-        messages.append(f"- {LEGACY_RECORDS_DIR}")
-        messages.append(f"\n你可以手动删除这些旧目录。")
+            messages.append(i18n.t("paths.migration_records", count=stats['records']))
+        messages.append(i18n.t("paths.legacy_files_kept"))
+        messages.append(i18n.t("paths.legacy_logs_dir", path=str(LEGACY_LOGS_DIR)))
+        messages.append(i18n.t("paths.legacy_config_dir", path=str(LEGACY_CONFIG_DIR)))
+        messages.append(i18n.t("paths.legacy_records_dir", path=str(LEGACY_RECORDS_DIR)))
+        messages.append(i18n.t("paths.can_delete_legacy"))
 
     return "\n".join(messages)

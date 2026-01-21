@@ -11,6 +11,7 @@ from datetime import datetime
 import os
 
 from output_manager import Out
+from i18n import get_i18n
 
 
 class SubtitleWindow(QWidget):
@@ -18,6 +19,9 @@ class SubtitleWindow(QWidget):
 
     def __init__(self):
         super().__init__()
+
+        # 初始化 i18n
+        self.i18n = get_i18n()
 
         # 窗口属性 - 强制置顶
         self.setWindowFlags(
@@ -89,7 +93,7 @@ class SubtitleWindow(QWidget):
                 background-color: rgba(120, 170, 255, 200);
             }
         """)
-        self.subtitle_text.setPlaceholderText("等待翻译...")
+        self.subtitle_text.setPlaceholderText(self.i18n.t("ui.subtitle.waiting"))
         layout.addWidget(self.subtitle_text)
 
         # 控制栏（右下角）：字体大小按钮 + 缩放手柄
@@ -102,7 +106,7 @@ class SubtitleWindow(QWidget):
         # 字体减小按钮
         self.font_decrease_btn = QPushButton("A-")
         self.font_decrease_btn.setFixedSize(40, 30)
-        self.font_decrease_btn.setToolTip("减小字体")
+        self.font_decrease_btn.setToolTip(self.i18n.t("ui.tooltips.font_decrease"))
         self.font_decrease_btn.setStyleSheet("""
             QPushButton {
                 background-color: rgba(100, 150, 255, 150);
@@ -125,7 +129,7 @@ class SubtitleWindow(QWidget):
         # 字体增大按钮
         self.font_increase_btn = QPushButton("A+")
         self.font_increase_btn.setFixedSize(40, 30)
-        self.font_increase_btn.setToolTip("增大字体")
+        self.font_increase_btn.setToolTip(self.i18n.t("ui.tooltips.font_increase"))
         self.font_increase_btn.setStyleSheet("""
             QPushButton {
                 background-color: rgba(100, 150, 255, 150);
@@ -289,18 +293,18 @@ class SubtitleWindow(QWidget):
         if self.font_size < self.max_font_size:
             self.font_size += 2
             self._update_font()
-            Out.status(f"字体大小: {self.font_size}")
+            Out.status(self.i18n.t("status.font_size_changed", size=self.font_size))
         else:
-            Out.status("已达到最大字体大小")
+            Out.status(self.i18n.t("status.font_size_max"))
 
     def decrease_font_size(self):
         """减小字体大小"""
         if self.font_size > self.min_font_size:
             self.font_size -= 2
             self._update_font()
-            Out.status(f"字体大小: {self.font_size}")
+            Out.status(self.i18n.t("status.font_size_changed", size=self.font_size))
         else:
-            Out.status("已达到最小字体大小")
+            Out.status(self.i18n.t("status.font_size_min"))
 
     def _update_font(self):
         """更新字幕文本框的字体"""
@@ -315,7 +319,7 @@ class SubtitleWindow(QWidget):
         self.current_source_text = ""
         self.subtitle_text.clear()
         self.meeting_start_time = datetime.now()  # 重置开始时间
-        Out.status("字幕已清空")
+        Out.status(self.i18n.t("status.subtitle_cleared"))
 
     def save_subtitles(self, save_dir: str = ".") -> str:
         """
@@ -328,7 +332,7 @@ class SubtitleWindow(QWidget):
             str: 保存的文件路径
         """
         if not self.subtitle_history:
-            Out.warning("没有字幕内容可保存")
+            Out.warning(self.i18n.t("warnings.no_subtitle_to_save"))
             return ""
 
         # 计算会议时长
@@ -336,16 +340,16 @@ class SubtitleWindow(QWidget):
         duration_minutes = int(duration.total_seconds() / 60)
 
         # 生成文件名：会议记录_YYYYMMDD_HHMMSS_XXmin.txt
-        filename = f"会议记录_{self.meeting_start_time.strftime('%Y%m%d_%H%M%S')}_{duration_minutes}min.txt"
+        filename = f"{self.i18n.t('ui.subtitle.meeting_record')}_{self.meeting_start_time.strftime('%Y%m%d_%H%M%S')}_{duration_minutes}min.txt"
         filepath = os.path.join(save_dir, filename)
 
         # 写入文件
         try:
             with open(filepath, 'w', encoding='utf-8') as f:
-                f.write(f"会议记录\n")
-                f.write(f"开始时间: {self.meeting_start_time.strftime('%Y-%m-%d %H:%M:%S')}\n")
-                f.write(f"结束时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-                f.write(f"会议时长: {duration_minutes} 分钟\n")
+                f.write(f"{self.i18n.t('ui.subtitle.meeting_record')}\n")
+                f.write(f"{self.i18n.t('ui.subtitle.start_time')} {self.meeting_start_time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+                f.write(f"{self.i18n.t('ui.subtitle.end_time')} {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                f.write(f"{self.i18n.t('ui.subtitle.duration')} {duration_minutes} {self.i18n.t('ui.subtitle.minutes')}\n")
                 f.write("=" * 50 + "\n\n")
 
                 # 从结构化数据生成文件格式
@@ -363,7 +367,7 @@ class SubtitleWindow(QWidget):
 
             return filepath
         except Exception as e:
-            Out.error(f"保存字幕失败: {e}")
+            Out.error(self.i18n.t("errors.subtitle_save_failed", error=str(e)))
             return ""
 
     # 拖动功能

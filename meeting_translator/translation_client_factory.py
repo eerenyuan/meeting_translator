@@ -185,6 +185,29 @@ class TranslationClientFactory:
             return {}
 
     @staticmethod
+    def get_supported_voices_i18n(provider: str, i18n) -> Dict[str, str]:
+        """
+        Get supported voices for a provider with i18n translations
+
+        Args:
+            provider: Provider name (aliyun, openai, etc.)
+            i18n: I18n manager instance
+
+        Returns:
+            Dict mapping voice IDs to translated display names
+        """
+        provider = provider.lower()
+
+        if provider == "aliyun" or provider == "alibaba":
+            return QwenClient.get_supported_voices_i18n(i18n)
+        elif provider == "openai":
+            return OpenAIClient.get_supported_voices_i18n(i18n)
+        elif provider == "doubao":
+            return DoubaoClient.get_supported_voices()  # Doubao doesn't have voice metadata
+        else:
+            return {}
+
+    @staticmethod
     def get_supported_languages(provider: str) -> Dict[str, str]:
         """
         Get supported languages for a provider
