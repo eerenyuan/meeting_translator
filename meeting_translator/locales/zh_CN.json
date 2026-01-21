@@ -16,7 +16,11 @@
       "s2s_input_mic": "🎤 我的语言麦克风:",
       "s2s_output_virtual_mic": "🔊 会议语言虚拟麦克风输出:",
       "s2s_voice": "🎭 会议语言语音音色:",
-      "device_info_select": "请选择设备"
+      "device_info_select": "请选择设备",
+      "s2t_device": "S2T 设备",
+      "s2s_input": "S2S 输入",
+      "s2s_output": "S2S 输出",
+      "not_set": "未设置"
     },
     "buttons": {
       "refresh_devices": "🔄 刷新设备列表",
@@ -62,7 +66,31 @@
       "recommended_loopback": "⭐ WASAPI Loopback（推荐）",
       "recommended_tag": "[推荐]",
       "virtual_tag": "[虚拟]",
-      "available_tag": "[可用]"
+      "available_tag": "[可用]",
+      "input": "输入",
+      "output": "输出",
+      "virtual_device_recommended": "⭐ 虚拟音频设备（推荐）",
+      "sample_rate": "采样率",
+      "channels": "声道"
+    },
+    "languages": {
+      "chinese": "中文",
+      "english": "英语",
+      "spanish": "西班牙语",
+      "french": "法语",
+      "portuguese": "葡萄牙语",
+      "russian": "俄语",
+      "japanese": "日语",
+      "korean": "韩语",
+      "german": "德语",
+      "italian": "意大利语",
+      "cantonese": "粤语"
+    },
+    "voices": {
+      "male": "男声",
+      "female": "女声",
+      "neutral": "中性",
+      "recommended": "推荐"
     }
   },
   "status": {

@@ -16,7 +16,11 @@
       "s2s_input_mic": "🎤 My Language Microphone:",
       "s2s_output_virtual_mic": "🔊 Meeting Language Virtual Microphone Output:",
       "s2s_voice": "🎭 Meeting Language Voice:",
-      "device_info_select": "Please select a device"
+      "device_info_select": "Please select a device",
+      "s2t_device": "S2T Device",
+      "s2s_input": "S2S Input",
+      "s2s_output": "S2S Output",
+      "not_set": "Not Set"
     },
     "buttons": {
       "refresh_devices": "🔄 Refresh Device List",
@@ -62,7 +66,31 @@
       "recommended_loopback": "⭐ WASAPI Loopback (Recommended)",
       "recommended_tag": "[Recommended]",
       "virtual_tag": "[Virtual]",
-      "available_tag": "[Available]"
+      "available_tag": "[Available]",
+      "input": "Input",
+      "output": "Output",
+      "virtual_device_recommended": "⭐ Virtual Audio Device (Recommended)",
+      "sample_rate": "Sample Rate",
+      "channels": "Channels"
+    },
+    "languages": {
+      "chinese": "Chinese",
+      "english": "English",
+      "spanish": "Spanish",
+      "french": "French",
+      "portuguese": "Portuguese",
+      "russian": "Russian",
+      "japanese": "Japanese",
+      "korean": "Korean",
+      "german": "German",
+      "italian": "Italian",
+      "cantonese": "Cantonese"
+    },
+    "voices": {
+      "male": "Male",
+      "female": "Female",
+      "neutral": "Neutral",
+      "recommended": "Recommended"
     }
   },
   "status": {

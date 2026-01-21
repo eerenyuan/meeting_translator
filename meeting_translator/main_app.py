@@ -66,6 +66,21 @@ class MeetingTranslatorApp(QWidget):
         "doubao": 16000,   # Doubao: 16kHz
     }
 
+    # 语言名称到 i18n 键的映射（用于翻译显示名称）
+    LANGUAGE_NAME_TO_KEY = {
+        "中文": "chinese",
+        "英语": "english",
+        "西班牙语": "spanish",
+        "法语": "french",
+        "葡萄牙语": "portuguese",
+        "俄语": "russian",
+        "日语": "japanese",
+        "韩语": "korean",
+        "德语": "german",
+        "意大利语": "italian",
+        "粤语": "cantonese",
+    }
+
     def __init__(self):
         super().__init__()
 
@@ -224,6 +239,19 @@ class MeetingTranslatorApp(QWidget):
                 Out.status(self.i18n.t("status.stylesheet_loaded"))
         except Exception as e:
             Out.warning(self.i18n.t("warnings.stylesheet_load_failed", error=str(e)))
+
+    def _get_language_display_name(self, lang_name: str) -> str:
+        """
+        获取语言的翻译显示名称
+
+        Args:
+            lang_name: 语言名称（中文，如 "中文", "英语"）
+
+        Returns:
+            翻译后的显示名称（根据当前UI语言）
+        """
+        lang_key = self.LANGUAGE_NAME_TO_KEY.get(lang_name, lang_name.lower())
+        return self.i18n.t(f"ui.languages.{lang_key}")
 
     def init_ui(self):
         """初始化UI"""
@@ -446,17 +474,20 @@ class MeetingTranslatorApp(QWidget):
         remaining_languages = sorted(all_languages - set(sorted_languages))
         sorted_languages.extend(remaining_languages)
 
-        # 清空并添加
+        # 清空并添加（显示翻译后的名称，但数据仍使用原始键）
         combo.clear()
         for lang in sorted_languages:
-            combo.addItem(lang)
+            # 使用翻译后的语言名称显示，但存储原始键作为数据
+            display_name = self._get_language_display_name(lang)
+            combo.addItem(display_name, lang)
 
     def on_my_language_changed(self, index):
         """我的语言变更事件"""
         if self.is_loading_config:
             return
 
-        new_language = self.my_language_combo.itemText(index)
+        # 获取存储的原始语言键（而非显示的翻译名称）
+        new_language = self.my_language_combo.itemData(index)
         if not new_language or new_language == self.my_language:
             return
 
@@ -465,7 +496,7 @@ class MeetingTranslatorApp(QWidget):
             Out.user_alert(message=self.i18n.t("ui.messages.same_language_error"), title=self.i18n.t("ui.messages.language_setting_error"))
             # 回滚到原来的语言
             for i in range(self.my_language_combo.count()):
-                if self.my_language_combo.itemText(i) == self.my_language:
+                if self.my_language_combo.itemData(i) == self.my_language:
                     self.my_language_combo.setCurrentIndex(i)
                     return
 
@@ -476,14 +507,18 @@ class MeetingTranslatorApp(QWidget):
         # 更新可用的 providers
         self._update_available_providers()
 
-        Out.status(f"我的语言: {old_language} -> {new_language}")
+        # 使用翻译后的名称显示状态消息
+        old_display = self._get_language_display_name(old_language)
+        new_display = self._get_language_display_name(new_language)
+        Out.status(self.i18n.t("status.my_language_changed", old=old_display, new=new_display))
 
     def on_meeting_language_changed(self, index):
         """会议语言变更事件"""
         if self.is_loading_config:
             return
 
-        new_language = self.meeting_language_combo.itemText(index)
+        # 获取存储的原始语言键（而非显示的翻译名称）
+        new_language = self.meeting_language_combo.itemData(index)
         if not new_language or new_language == self.meeting_language:
             return
 
@@ -492,7 +527,7 @@ class MeetingTranslatorApp(QWidget):
             Out.user_alert(message=self.i18n.t("ui.messages.same_language_error"), title=self.i18n.t("ui.messages.language_setting_error"))
             # 回滚到原来的语言
             for i in range(self.meeting_language_combo.count()):
-                if self.meeting_language_combo.itemText(i) == self.meeting_language:
+                if self.meeting_language_combo.itemData(i) == self.meeting_language:
                     self.meeting_language_combo.setCurrentIndex(i)
                     return
 
@@ -503,7 +538,10 @@ class MeetingTranslatorApp(QWidget):
         # 更新可用的 providers
         self._update_available_providers()
 
-        Out.status(f"会议语言: {old_language} -> {new_language}")
+        # 使用翻译后的名称显示状态消息
+        old_display = self._get_language_display_name(old_language)
+        new_display = self._get_language_display_name(new_language)
+        Out.status(self.i18n.t("status.meeting_language_changed", old=old_display, new=new_display))
 
     def _get_language_code(self, language_name: str) -> str:
         """将语言名称转换为语言代码"""
@@ -639,11 +677,11 @@ class MeetingTranslatorApp(QWidget):
         if device:
             info_parts = [
                 f"API: {device.get('host_api', 'Unknown')}",
-                f"采样率: {device['sample_rate']} Hz",
-                f"声道: {device['channels']}"
+                f"{self.i18n.t('ui.device.sample_rate')}: {device['sample_rate']} Hz",
+                f"{self.i18n.t('ui.device.channels')}: {device['channels']}"
             ]
             if device.get('is_wasapi_loopback'):
-                info_parts.append("⭐ WASAPI Loopback（推荐）")
+                info_parts.append(self.i18n.t("ui.device.recommended_loopback"))
             info_text = " | ".join(info_parts)
             self.s2t_device_info.setText(info_text)
 
@@ -699,11 +737,11 @@ class MeetingTranslatorApp(QWidget):
 
         if input_device and output_device:
             info_parts = [
-                f"输入: {input_device['sample_rate']}Hz",
-                f"输出: {output_device['sample_rate']}Hz"
+                f"{self.i18n.t('ui.device.input')}: {input_device['sample_rate']}Hz",
+                f"{self.i18n.t('ui.device.output')}: {output_device['sample_rate']}Hz"
             ]
             if 'CABLE' in output_device['name'] or 'VoiceMeeter' in output_device['name']:
-                info_parts.append("⭐ 虚拟音频设备（推荐）")
+                info_parts.append(self.i18n.t("ui.device.virtual_device_recommended"))
             info_text = " | ".join(info_parts)
             self.s2s_device_info.setText(info_text)
 
@@ -746,11 +784,11 @@ class MeetingTranslatorApp(QWidget):
 
             self.s2s_voice_combo.clear()
 
-            # 获取该 provider 支持的音色
-            voices = TranslationClientFactory.get_supported_voices(self.s2s_provider)
+            # 获取该 provider 支持的音色（带 i18n 翻译）
+            voices = TranslationClientFactory.get_supported_voices_i18n(self.s2s_provider, self.i18n)
 
             if not voices:
-                self.s2s_voice_combo.addItem("该提供商不支持音色选择", "")
+                self.s2s_voice_combo.addItem(self.i18n.t("ui.providers.not_support_voice"), "")
                 self.s2s_voice_combo.setEnabled(False)
                 Out.status(f"{self.s2s_provider} 不支持音色选择")
                 return
@@ -946,7 +984,7 @@ class MeetingTranslatorApp(QWidget):
             display_name = device.get('display_name', device['name'])
             # 标记 loopback 设备为推荐（用于捕获系统音频）
             if device.get('is_loopback'):
-                display_name += " [推荐]"
+                display_name += " " + self.i18n.t("ui.device.recommended_tag")
             self.s2t_device_combo.addItem(display_name, device)
 
         self._auto_select_loopback(self.s2t_device_combo)
@@ -966,13 +1004,13 @@ class MeetingTranslatorApp(QWidget):
         for device in all_output_devices:
             display_name = device.get('display_name', device['name'])
             if device.get('is_virtual'):
-                display_name += " [虚拟]"
+                display_name += " " + self.i18n.t("ui.device.virtual_tag")
 
             host_api = device.get('host_api', '')
             if 'WASAPI' in host_api:
-                display_name += " [推荐]"
+                display_name += " " + self.i18n.t("ui.device.recommended_tag")
             elif 'MME' in host_api:
-                display_name += " [可用]"
+                display_name += " " + self.i18n.t("ui.device.available_tag")
 
             self.s2s_output_combo.addItem(display_name, device)
 
@@ -1029,16 +1067,18 @@ class MeetingTranslatorApp(QWidget):
     def load_config(self):
         """加载保存的配置"""
         Out.status("=" * 60)
-        Out.status("开始加载上次保存的配置...")
+        Out.status(self.i18n.t("status.config_loading"))
 
-        # 显示所有配置项
-        Out.status(f"  我的语言: {self.config_manager.get_my_language()}")
-        Out.status(f"  会议语言: {self.config_manager.get_meeting_language()}")
+        # 显示所有配置项（使用翻译后的语言名称）
+        my_lang_key = self.config_manager.get_my_language()
+        meeting_lang_key = self.config_manager.get_meeting_language()
+        Out.status(f"  {self.i18n.t('ui.labels.my_language')} {self._get_language_display_name(my_lang_key)}")
+        Out.status(f"  {self.i18n.t('ui.labels.meeting_language')} {self._get_language_display_name(meeting_lang_key)}")
         Out.status(f"  S2T Provider: {self.config_manager.get_s2t_provider()}")
-        Out.status(f"  S2T 设备: {self.config_manager.get_s2t_listen_device_display() or '未设置'}")
+        Out.status(f"  {self.i18n.t('ui.labels.s2t_device')}: {self.config_manager.get_s2t_listen_device_display() or self.i18n.t('ui.labels.not_set')}")
         Out.status(f"  S2S Provider: {self.config_manager.get_s2s_provider()}")
-        Out.status(f"  S2S 输入: {self.config_manager.get_s2s_input_device_display() or '未设置'}")
-        Out.status(f"  S2S 输出: {self.config_manager.get_s2s_output_device_display() or '未设置'}")
+        Out.status(f"  {self.i18n.t('ui.labels.s2s_input')}: {self.config_manager.get_s2s_input_device_display() or self.i18n.t('ui.labels.not_set')}")
+        Out.status(f"  {self.i18n.t('ui.labels.s2s_output')}: {self.config_manager.get_s2s_output_device_display() or self.i18n.t('ui.labels.not_set')}")
         Out.status(f"  S2S 音色: {self.config_manager.get_s2s_voice()}")
 
         # 0. 恢复语言设置
@@ -1046,17 +1086,19 @@ class MeetingTranslatorApp(QWidget):
         saved_meeting_lang = self.config_manager.get_meeting_language()
 
         for i in range(self.my_language_combo.count()):
-            if self.my_language_combo.itemText(i) == saved_my_lang:
+            if self.my_language_combo.itemData(i) == saved_my_lang:
                 self.my_language_combo.setCurrentIndex(i)
                 self.my_language = saved_my_lang
-                Out.status(f"✓ 恢复我的语言: {saved_my_lang}")
+                display_name = self._get_language_display_name(saved_my_lang)
+                Out.status(f"✓ 恢复我的语言: {display_name}")
                 break
 
         for i in range(self.meeting_language_combo.count()):
-            if self.meeting_language_combo.itemText(i) == saved_meeting_lang:
+            if self.meeting_language_combo.itemData(i) == saved_meeting_lang:
                 self.meeting_language_combo.setCurrentIndex(i)
                 self.meeting_language = saved_meeting_lang
-                Out.status(f"✓ 恢复会议语言: {saved_meeting_lang}")
+                display_name = self._get_language_display_name(saved_meeting_lang)
+                Out.status(f"✓ 恢复会议语言: {display_name}")
                 break
 
         # 更新可用的 providers（基于语言设置）
