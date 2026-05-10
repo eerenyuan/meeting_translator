@@ -125,6 +125,11 @@ class MeetingTranslatorApp(QWidget):
         # 字幕窗口
         self.subtitle_window = None
 
+        # Context Assistant
+        self.context_sidebar = None
+        self.context_service = None
+        self.hotkey_manager = None
+
         # 初始化 OutputManager
         self._init_output_manager()
 
@@ -420,6 +425,22 @@ class MeetingTranslatorApp(QWidget):
         self.s2s_device_info = QLabel(self.i18n.t("ui.labels.device_info_select"))
         self.s2s_device_info.setObjectName("deviceInfoLabel")
         s2s_layout.addWidget(self.s2s_device_info)
+
+        test_row = QHBoxLayout()
+        test_row.setSpacing(8)
+        self._test_mic_btn = QPushButton("Test Mic")
+        self._test_mic_btn.setObjectName("secondaryButton")
+        self._test_mic_btn.clicked.connect(self._test_mic_input)
+        test_row.addWidget(self._test_mic_btn)
+        self._test_chain_btn = QPushButton("Test Chain")
+        self._test_chain_btn.setObjectName("secondaryButton")
+        self._test_chain_btn.clicked.connect(self._test_s2s_chain)
+        test_row.addWidget(self._test_chain_btn)
+        test_row.addWidget(QLabel("Virtual Mic:"))
+        self._test_vmic_combo = QComboBox()
+        self._test_vmic_combo.setMinimumWidth(200)
+        test_row.addWidget(self._test_vmic_combo, 1)
+        s2s_layout.addLayout(test_row)
 
         s2s_group.setLayout(s2s_layout)
         layout.addWidget(s2s_group)
@@ -1016,6 +1037,22 @@ class MeetingTranslatorApp(QWidget):
 
         self._auto_select_virtual_output(self.s2s_output_combo)
 
+        # 4. Load virtual mic combo for chain test (Voicemeeter/VB-Cable input devices)
+        self._test_vmic_combo.clear()
+        all_inputs = self.device_manager.get_input_devices()
+        for d in all_inputs:
+            n = d.get('name', '').lower()
+            if d.get('is_loopback'):
+                continue
+            is_virtual_in = any(k in n for k in [
+                'voicemeeter out', 'vb-audio voi', 'cable output', 'vb-cable'
+            ])
+            if is_virtual_in:
+                display_name = d.get('display_name', d['name'])
+                self._test_vmic_combo.addItem(display_name, d)
+        if self._test_vmic_combo.count() > 0:
+            self._test_vmic_combo.setCurrentIndex(0)
+
     def _auto_select_loopback(self, combo: QComboBox):
         """自动选择 Loopback 设备"""
         for i in range(combo.count()):
@@ -1250,6 +1287,9 @@ class MeetingTranslatorApp(QWidget):
             self.s2t_provider_combo.setEnabled(False)
             self.subtitle_btn.setEnabled(True)
 
+            # Start Context Assistant
+            self._start_context_assistant()
+
             self.update_status("s2t_running", "running")
             Out.status(self.i18n.t("status.s2t_started"))
 
@@ -1289,8 +1329,75 @@ class MeetingTranslatorApp(QWidget):
         self.s2t_provider_combo.setEnabled(True)
         self.subtitle_btn.setEnabled(False)
 
+        # Stop Context Assistant
+        self._stop_context_assistant()
+
         self.update_status("ready", "ready")
         Out.status(self.i18n.t("status.s2t_stopped"))
+
+    # ===== Context Assistant =====
+
+    def _start_context_assistant(self):
+        try:
+            from context_assistant.context_sidebar import ContextSidebar
+            from context_assistant.context_service import ContextService
+            from context_assistant.hotkey_manager import HotkeyManager
+
+            if not self.context_sidebar:
+                self.context_sidebar = ContextSidebar()
+
+            if self.subtitle_window:
+                geo = self.subtitle_window.geometry()
+                sidebar_x = geo.right() + 10
+                sidebar_y = geo.top()
+                screen = QApplication.desktop().availableGeometry()
+                if sidebar_x + 380 > screen.right():
+                    sidebar_x = geo.left() - 390
+                if sidebar_x < screen.left():
+                    sidebar_x = screen.right() - 390
+                self.context_sidebar.move(sidebar_x, sidebar_y)
+
+            self.context_sidebar.show()
+
+            def get_history(max_items):
+                if self.subtitle_window:
+                    return self.subtitle_window.get_recent_history(max_items)
+                return []
+
+            def on_result(mode, content, error):
+                if self.context_sidebar:
+                    self.context_sidebar.on_result(mode, content, error)
+
+            self.context_service = ContextService(get_history, on_result)
+
+            self.context_sidebar.set_trigger_callback(self.context_service.trigger)
+
+            if not self.hotkey_manager:
+                self.hotkey_manager = HotkeyManager()
+                self.hotkey_manager.register('f1', lambda: self.context_service.trigger('explain'))
+                self.hotkey_manager.register('f2', lambda: self.context_service.trigger('experience'))
+                self.hotkey_manager.register('f3', lambda: self.context_service.trigger('ammo'))
+                self.hotkey_manager.register('f4', lambda: self.context_service.trigger('reply'))
+
+            self.hotkey_manager.enable()
+
+            Out.status(self.i18n.t("status.context_assistant_started"))
+        except Exception as e:
+            Out.error(f"Context Assistant start failed: {e}", exc_info=True)
+
+    def _stop_context_assistant(self):
+        try:
+            if self.hotkey_manager:
+                self.hotkey_manager.disable()
+        except Exception:
+            pass
+        try:
+            if self.context_sidebar:
+                self.context_sidebar.close()
+                self.context_sidebar = None
+        except Exception:
+            pass
+        self.context_service = None
 
     # ===== S2S 服务管理 =====
 
@@ -1440,6 +1547,229 @@ class MeetingTranslatorApp(QWidget):
                 self.subtitle_window.show()
                 self.subtitle_btn.setText(self.i18n.t("ui.buttons.hide_subtitle"))
 
+    # ===== S2S 音频测试 =====
+
+    def _test_mic_input(self):
+        device = self.s2s_input_combo.currentData()
+        if not device:
+            Out.user_alert("Please select a microphone first", "No Mic Selected")
+            return
+        self._test_mic_btn.setEnabled(False)
+        self._test_chain_btn.setEnabled(False)
+        Out.status(f"[Test Mic] Recording 3s from {device['name']}...")
+
+        def worker():
+            try:
+                import pyaudio as _pa
+                try:
+                    import pyaudiowpatch as _pa
+                except ImportError:
+                    pass
+                import numpy as _np
+
+                pa = _pa.PyAudio()
+                rate = int(device['sample_rate'])
+                channels = min(device['channels'], 2)
+                chunk = int(rate * 0.1)
+
+                stream = pa.open(format=_pa.paInt16, channels=channels, rate=rate,
+                                 input=True, input_device_index=device['index'],
+                                 frames_per_buffer=chunk)
+                frames = [stream.read(chunk, exception_on_overflow=False) for _ in range(30)]
+                stream.stop_stream()
+                stream.close()
+
+                pcm = b''.join(frames)
+                samples = _np.frombuffer(pcm, dtype=_np.int16)
+                max_val = int(_np.max(_np.abs(samples)))
+                rms = int(_np.sqrt(_np.mean(samples.astype(float) ** 2)))
+
+                if max_val < 50:
+                    Out.status(f"[Test Mic] FAIL - No signal (max={max_val}). Mic muted?")
+                elif max_val < 500:
+                    Out.status(f"[Test Mic] WARN - Weak signal (max={max_val}, rms={rms})")
+                else:
+                    Out.status(f"[Test Mic] OK - Good signal (max={max_val}, rms={rms})")
+
+                self._test_pcm = pcm
+                self._test_rate = rate
+                self._test_channels = channels
+                self._playback_test_audio()
+                pa.terminate()
+            except Exception as e:
+                Out.error(f"[Test Mic] Error: {e}")
+            finally:
+                self._test_mic_btn.setEnabled(True)
+                self._test_chain_btn.setEnabled(True)
+
+        import threading
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _test_s2s_chain(self):
+        mic_dev = self.s2s_input_combo.currentData()
+        vout_dev = self.s2s_output_combo.currentData()
+        vin_dev = self._test_vmic_combo.currentData()
+        if not mic_dev:
+            Out.user_alert("Please select a real microphone first", "No Mic Selected")
+            return
+        if not vout_dev:
+            Out.user_alert("Please select a virtual output device first", "No Output Selected")
+            return
+        if not vin_dev:
+            Out.user_alert("Please select a virtual mic for the chain test", "No Virtual Mic Selected")
+            return
+        if self.s2s_is_running:
+            Out.user_alert("S2S is already running. Please stop it first.", "S2S Running")
+            return
+
+        self._test_mic_btn.setEnabled(False)
+        self._test_chain_btn.setEnabled(False)
+        self._test_chain_capturing = True
+        self._test_chain_error_count = 0
+
+        provider = self.s2s_provider
+        Out.status(f"[Test Chain] Starting 8s S2S test with provider={provider}...")
+        Out.status("[Test Chain] Speak continuously into your mic! API errors are normal for short/silent input.")
+
+        try:
+            import pyaudiowpatch as _pa_mod
+        except ImportError:
+            import pyaudio as _pa_mod
+
+        vin_pa = _pa_mod.PyAudio()
+        vin_rate = int(vin_dev['sample_rate'])
+        vin_ch = min(vin_dev['channels'], 2)
+        in_chunk = int(vin_rate * 0.1)
+        vin_stream = vin_pa.open(
+            format=_pa_mod.paInt16, channels=vin_ch, rate=vin_rate,
+            input=True, input_device_index=vin_dev['index'],
+            frames_per_buffer=in_chunk
+        )
+
+        try:
+            self._start_s2s_service()
+        except Exception as e:
+            Out.status(f"[Test Chain] S2S start failed: {e}")
+            if self.s2s_is_running:
+                self._stop_s2s_service()
+            try:
+                vin_stream.stop_stream()
+                vin_stream.close()
+                vin_pa.terminate()
+            except Exception:
+                pass
+            self._test_mic_btn.setEnabled(True)
+            self._test_chain_btn.setEnabled(True)
+            return
+
+        import threading
+        captured = []
+
+        def capture_loop():
+            while self._test_chain_capturing:
+                try:
+                    captured.append(vin_stream.read(in_chunk, exception_on_overflow=False))
+                except Exception:
+                    break
+
+        cap_thread = threading.Thread(target=capture_loop, daemon=True)
+        cap_thread.start()
+
+        def stop_and_playback():
+            import time
+            time.sleep(8)
+            self._test_chain_capturing = False
+            cap_thread.join(timeout=2)
+
+            try:
+                vin_stream.stop_stream()
+                vin_stream.close()
+                vin_pa.terminate()
+            except Exception:
+                pass
+
+            Out.status("[Test Chain] Stopping S2S pipeline...")
+            if self.s2s_is_running:
+                self._stop_s2s_service()
+
+            if captured:
+                import numpy as _np
+                pcm = b''.join(captured)
+                samples = _np.frombuffer(pcm, dtype=_np.int16)
+                max_val = int(_np.max(_np.abs(samples))) if len(samples) > 0 else 0
+
+                if max_val < 50:
+                    Out.status(f"[Test Chain] FAIL - No audio at virtual mic (max={max_val})")
+                    Out.status("[Test Chain] S2S ran but nothing reached virtual mic. Check Voicemeeter routing.")
+                else:
+                    Out.status(f"[Test Chain] OK - Audio captured (max={max_val}). Playing back...")
+                    self._chain_pcm = pcm
+                    self._chain_rate = vin_rate
+                    self._chain_channels = vin_ch
+                    self._playback_chain_audio()
+            else:
+                Out.status("[Test Chain] FAIL - No audio captured from virtual mic")
+
+            self._test_mic_btn.setEnabled(True)
+            self._test_chain_btn.setEnabled(True)
+
+        threading.Thread(target=stop_and_playback, daemon=True).start()
+
+    def _playback_test_audio(self):
+        if not hasattr(self, '_test_pcm'):
+            return
+        import threading
+
+        def _play():
+            try:
+                import pyaudio as _pa
+                try:
+                    import pyaudiowpatch as _pa
+                except ImportError:
+                    pass
+                pa = _pa.PyAudio()
+                rate, channels = self._test_rate, self._test_channels
+                stream = pa.open(format=_pa.paInt16, channels=channels, rate=rate,
+                                 output=True, frames_per_buffer=int(rate * 0.05))
+                chunk = int(rate * 0.05) * channels * 2
+                for i in range(0, len(self._test_pcm), chunk):
+                    stream.write(self._test_pcm[i:i + chunk])
+                stream.stop_stream()
+                stream.close()
+                pa.terminate()
+            except Exception:
+                pass
+        threading.Thread(target=_play, daemon=True).start()
+
+    def _playback_chain_audio(self):
+        if not hasattr(self, '_chain_pcm'):
+            return
+        import threading
+
+        def _play():
+            try:
+                import pyaudio as _pa
+                try:
+                    import pyaudiowpatch as _pa
+                except ImportError:
+                    pass
+                pa = _pa.PyAudio()
+                rate, channels = self._chain_rate, self._chain_channels
+                stream = pa.open(format=_pa.paInt16, channels=channels, rate=rate,
+                                 output=True, frames_per_buffer=int(rate * 0.05))
+                chunk = int(rate * 0.05) * channels * 2
+                for i in range(0, len(self._chain_pcm), chunk):
+                    stream.write(self._chain_pcm[i:i + chunk])
+                stream.stop_stream()
+                stream.close()
+                pa.terminate()
+            except Exception:
+                pass
+        threading.Thread(target=_play, daemon=True).start()
+
+
+    # ===== 字幕窗口 =====
+
     # ===== 窗口关闭 =====
 
     def closeEvent(self, event):
@@ -1468,6 +1798,9 @@ class MeetingTranslatorApp(QWidget):
         # 关闭字幕窗口
         if self.subtitle_window:
             self.subtitle_window.close()
+
+        # 关闭 Context Assistant
+        self._stop_context_assistant()
 
         # 清理设备管理器
         if self.device_manager:

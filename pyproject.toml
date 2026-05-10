@@ -15,7 +15,14 @@ dependencies = [
     "python-dotenv==1.0.0",
 
     # GUI / 图形界面
-    "PyQt5==5.15.10",
+    "PyQt5>=5.15.9,<5.15.13",
+    "pyqt5-qt5>=5.15.2,<5.15.3",
+
+    # Windows WASAPI loopback support / Windows 环回音频支持
+    "pyaudiowpatch>=0.2.12.8; sys_platform == 'win32'",
+
+    # Context Assistant / 背景助手
+    "keyboard>=0.13.5",
 ]
 
 [project.optional-dependencies]
@@ -37,9 +44,6 @@ all = [
     "protobuf>=4.25.1",
     "openai>=1.0.0",
 ]
-
-# Note: pyaudiowpatch (Windows WASAPI support) must be installed manually on Windows
-# Windows 用户请手动安装 pyaudiowpatch: pip install pyaudiowpatch==0.2.12.13
 
 [build-system]
 requires = ["hatchling"]

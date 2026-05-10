@@ -17,8 +17,11 @@ import sys
 import os
 from pathlib import Path
 
-# Add meeting_translator directory to Python path for relative imports
-# meeting_translator 包使用相对导入，需要将其目录添加到 Python 路径
+# Disable auto DPI scaling to prevent layout jump when dragging between monitors
+os.environ.setdefault('QT_AUTO_SCREEN_SCALE_FACTOR', '0')
+os.environ.setdefault('QT_ENABLE_HIGHDPI_SCALING', '0')
+os.environ.setdefault('QT_SCALE_FACTOR', '1')
+
 package_dir = Path(__file__).parent / "meeting_translator"
 sys.path.insert(0, str(package_dir))
 

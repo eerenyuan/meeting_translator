@@ -55,7 +55,7 @@ class SubtitleWindow(QWidget):
         self.drag_position = None
 
         # 设置初始大小和位置
-        self.resize(1200, 400)  # 增大初始尺寸：1200x400
+        self.resize(900, 300)  # 增大初始尺寸：1200x400
         self.setMinimumSize(400, 200)  # 设置最小尺寸，避免太小
         self.move(100, 100)
 
@@ -310,6 +310,16 @@ class SubtitleWindow(QWidget):
         """更新字幕文本框的字体"""
         font = QFont("Microsoft YaHei", self.font_size, QFont.Bold)
         self.subtitle_text.setFont(font)
+
+    def get_recent_history(self, max_items: int = 8) -> list:
+        result = self.subtitle_history[-max_items:] if self.subtitle_history else []
+        if not result and self.current_partial_text:
+            result = [{
+                'timestamp': self.meeting_start_time,
+                'source': self.current_source_text or "",
+                'target': self.current_partial_text,
+            }]
+        return result
 
     def clear_subtitle(self):
         """清空字幕"""

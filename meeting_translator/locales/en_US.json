@@ -146,7 +146,8 @@
     "main_event_loop_exited": "Main event loop exited with code: {exit_code}",
     "checking_voice_samples": "Checking {provider} voice samples...",
     "voice_sample_skip": "  [SKIP] {provider} has no supported voices",
-    "dependency_rollback": "Missing dependency, rolled back to original provider: {provider}"
+    "dependency_rollback": "Missing dependency, rolled back to original provider: {provider}",
+    "context_assistant_started": "Context Assistant started (F1 Explain F2 Exp F3 Ammo F4 Reply)"
   },
   "warnings": {
     "stylesheet_load_failed": "Unable to load stylesheet: {error}, using default style",

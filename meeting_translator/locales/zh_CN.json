@@ -146,7 +146,8 @@
     "main_event_loop_exited": "主事件循环已退出，退出码: {exit_code}",
     "checking_voice_samples": "检查 {provider} 音色样本...",
     "voice_sample_skip": "  [SKIP] {provider} 没有支持的音色",
-    "dependency_rollback": "依赖缺失，已回滚到原提供商: {provider}"
+    "dependency_rollback": "依赖缺失，已回滚到原提供商: {provider}",
+    "context_assistant_started": "背景助手已启动 (F1解释 F2经验 F3弹药 F4回复)"
   },
   "warnings": {
     "stylesheet_load_failed": "无法加载样式表: {error}，使用默认样式",
