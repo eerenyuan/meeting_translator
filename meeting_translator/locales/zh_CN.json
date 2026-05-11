@@ -20,7 +20,8 @@
       "s2t_device": "S2T 设备",
       "s2s_input": "S2S 输入",
       "s2s_output": "S2S 输出",
-      "not_set": "未设置"
+      "not_set": "未设置",
+      "ui_language": "界面:"
     },
     "buttons": {
       "refresh_devices": "🔄 刷新设备列表",

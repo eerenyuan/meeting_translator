@@ -217,7 +217,8 @@ class ConfigManager:
                 "voice": "cherry",
                 "speak_input_device_display": None,
                 "speak_output_device_display": None
-            }
+            },
+            "test_vmic_display": None
         }
 
     def save_config(self):
@@ -431,15 +432,16 @@ class ConfigManager:
         return self.config.get("s2s", {}).get("speak_output_device_display")
 
     def set_s2s_output_device_display(self, display_name: Optional[str]):
-        """
-        设置 S2S 输出设备（虚拟麦克风）
-
-        Args:
-            display_name: 设备显示名称（例如 "Voicemeeter Input (VB-Audio Voicemeeter VAIO)"）
-        """
         if "s2s" not in self.config:
             self.config["s2s"] = {}
         self.config["s2s"]["speak_output_device_display"] = display_name
+        self.save_config()
+
+    def get_test_vmic_display(self) -> Optional[str]:
+        return self.config.get("test_vmic_display")
+
+    def set_test_vmic_display(self, display_name: Optional[str]):
+        self.config["test_vmic_display"] = display_name
         self.save_config()
 
     # ===== 兼容旧版本（v1.0） =====

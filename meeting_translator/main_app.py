@@ -340,6 +340,23 @@ class MeetingTranslatorApp(QWidget):
         self.meeting_language_combo.currentIndexChanged.connect(self.on_meeting_language_changed)
         language_layout.addWidget(self.meeting_language_combo, 1)
 
+        language_layout.addSpacing(20)
+
+        ui_lang_label = QLabel(self.i18n.t("ui.labels.ui_language"))
+        ui_lang_label.setObjectName("subtitleLabel")
+        language_layout.addWidget(ui_lang_label)
+
+        self._ui_lang_combo = QComboBox()
+        self._ui_lang_combo.addItem("中文", "zh_CN")
+        self._ui_lang_combo.addItem("English", "en_US")
+        current_lang = self.config_manager.get_lang()
+        for i in range(self._ui_lang_combo.count()):
+            if self._ui_lang_combo.itemData(i) == current_lang:
+                self._ui_lang_combo.setCurrentIndex(i)
+                break
+        self._ui_lang_combo.currentIndexChanged.connect(self._on_ui_lang_changed)
+        language_layout.addWidget(self._ui_lang_combo)
+
         language_group.setLayout(language_layout)
         layout.addWidget(language_group)
 
@@ -488,17 +505,12 @@ class MeetingTranslatorApp(QWidget):
         test_row.addWidget(QLabel("Virtual Mic:"))
         self._test_vmic_combo = QComboBox()
         self._test_vmic_combo.setMinimumWidth(200)
+        self._test_vmic_combo.currentIndexChanged.connect(self._on_test_vmic_selected)
         test_row.addWidget(self._test_vmic_combo, 1)
         s2s_layout.addLayout(test_row)
 
         s2s_group.setLayout(s2s_layout)
         layout.addWidget(s2s_group)
-
-        # 帮助信息
-        self.help_label = QLabel(self.i18n.t("ui.help.usage_instructions"))
-        self.help_label.setWordWrap(True)
-        self.help_label.setObjectName("infoLabel")
-        layout.addWidget(self.help_label)
 
         self.setLayout(layout)
 
@@ -532,6 +544,15 @@ class MeetingTranslatorApp(QWidget):
         for lang in popularity_order:
             display_name = self._get_language_display_name(lang)
             combo.addItem(display_name, lang)
+
+    def _on_ui_lang_changed(self, index):
+        if self.is_loading_config:
+            return
+        lang = self._ui_lang_combo.itemData(index)
+        if lang == self.config_manager.get_lang():
+            return
+        self.config_manager.set_lang(lang)
+        Out.status(f"UI language changed to {lang}, restart required")
 
     def on_my_language_changed(self, index):
         """我的语言变更事件"""
@@ -1088,6 +1109,10 @@ class MeetingTranslatorApp(QWidget):
                 self._test_vmic_combo.addItem(display_name, d)
         if self._test_vmic_combo.count() > 0:
             self._test_vmic_combo.setCurrentIndex(0)
+
+        saved_vmic = self.config_manager.get_test_vmic_display()
+        if saved_vmic:
+            self._select_device_by_display(self._test_vmic_combo, saved_vmic, "Test VMic")
 
     def _auto_select_loopback(self, combo: QComboBox):
         """自动选择 Loopback 设备"""
@@ -1656,6 +1681,12 @@ class MeetingTranslatorApp(QWidget):
 
         import threading
         threading.Thread(target=worker, daemon=True).start()
+
+    def _on_test_vmic_selected(self, index):
+        if not self.is_loading_config:
+            device = self._test_vmic_combo.currentData()
+            if device:
+                self.config_manager.set_test_vmic_display(device['display_name'])
 
     def _test_s2s_chain(self):
         if self._s2s_state != "idle":

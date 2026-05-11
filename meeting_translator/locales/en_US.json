@@ -20,7 +20,8 @@
       "s2t_device": "S2T Device",
       "s2s_input": "S2S Input",
       "s2s_output": "S2S Output",
-      "not_set": "Not Set"
+      "not_set": "Not Set",
+      "ui_language": "UI:"
     },
     "buttons": {
       "refresh_devices": "🔄 Refresh Device List",
