@@ -66,9 +66,16 @@ class DoubaoClient(BaseTranslationClient):
     # 支持的语言列表
     # 来源：https://www.volcengine.com/docs/6561/1756902?lang=zh
     # Key: 显示名称, Value: 语种代码
+    # 约束：非 zhen 模式下，source/target 之一必须是 zh 或 en
     SUPPORTED_LANGUAGES = {
         "中文": "zh",
         "英语": "en",
+        "日语": "ja",
+        "印尼语": "id",
+        "西班牙语": "es",
+        "葡萄牙语": "pt",
+        "德语": "de",
+        "法语": "fr",
     }
 
     # 豆包 AST API 使用 16kHz
@@ -334,42 +341,32 @@ class DoubaoClient(BaseTranslationClient):
                 response.ParseFromString(message)
                 event_type = response.event
 
-                # 源语言识别（ASR）- 不输出（避免冗余）
                 if event_type == self.EVENT_ASR_DELTA:
                     pass
 
                 elif event_type == self.EVENT_ASR_DONE:
                     pass
 
-                # 翻译完成
                 elif event_type == self.EVENT_TRANSLATE_DONE:
                     target_text = response.text
                     if target_text:
-                        # 根据模式选择输出方式
                         if self.audio_enabled:
-                            # S2S 模式：输出翻译到日志
                             self.output_translation(target_text, extra_metadata={"provider": "doubao", "mode": "S2S"})
-                            
                         else:
-                            # S2T 模式：输出字幕到窗口
                             self.output_subtitle(
-                                target_text=target_text, 
-                                is_final=True, 
+                                target_text=target_text,
+                                is_final=True,
                                 extra_metadata={"provider": "doubao", "mode": "S2T"})
-                            
-                # 音频输出（仅 S2S）
+
                 elif event_type == self.EVENT_AUDIO_DELTA:
                     if self.audio_enabled:
-                        # 音频增量数据（豆包使用 response.data）
                         audio_data = response.data
                         if audio_data:
-                            self._queue_audio(audio_data)  # 放入外部队列
+                            self._queue_audio(audio_data)
 
                 elif event_type == self.EVENT_AUDIO_DONE:
-                    # 音频输出完成（不输出）
                     pass
 
-                # 计费信息（不输出）
                 elif event_type == self.EVENT_USAGE:
                     pass
 
@@ -385,7 +382,6 @@ class DoubaoClient(BaseTranslationClient):
         self.output_status("关闭连接...")
         self.is_connected = False
 
-        # 关闭 WebSocket
         if self.ws:
             try:
                 await self.ws.close()

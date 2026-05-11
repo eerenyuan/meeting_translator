@@ -21,7 +21,7 @@ from PyQt5.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QComboBox, QLabel, QGroupBox
 )
-from PyQt5.QtCore import Qt, pyqtSignal, QObject
+from PyQt5.QtCore import Qt, pyqtSignal, QObject, QMetaObject, pyqtSlot
 from PyQt5.QtGui import QBrush, QColor
 from dotenv import load_dotenv
 
@@ -78,6 +78,54 @@ class MeetingTranslatorApp(QWidget):
         "韩语": "korean",
         "德语": "german",
         "意大利语": "italian",
+        "阿拉伯语": "arabic",
+        "印尼语": "indonesian",
+        "南非荷兰语": "afrikaans",
+        "阿塞拜疆语": "azerbaijani",
+        "白俄罗斯语": "belarusian",
+        "保加利亚语": "bulgarian",
+        "波斯尼亚语": "bosnian",
+        "加泰罗尼亚语": "catalan",
+        "捷克语": "czech",
+        "威尔士语": "welsh",
+        "丹麦语": "danish",
+        "希腊语": "greek",
+        "爱沙尼亚语": "estonian",
+        "波斯语": "persian",
+        "芬兰语": "finnish",
+        "加利西亚语": "galician",
+        "希伯来语": "hebrew",
+        "印地语": "hindi",
+        "克罗地亚语": "croatian",
+        "匈牙利语": "hungarian",
+        "亚美尼亚语": "armenian",
+        "冰岛语": "icelandic",
+        "意第绪语": "yiddish",
+        "哈萨克语": "kazakh",
+        "卡纳达语": "kannada",
+        "立陶宛语": "lithuanian",
+        "拉脱维亚语": "latvian",
+        "毛利语": "maori",
+        "马其顿语": "macedonian",
+        "马拉地语": "marathi",
+        "马来语": "malay",
+        "尼泊尔语": "nepali",
+        "荷兰语": "dutch",
+        "挪威语": "norwegian",
+        "波兰语": "polish",
+        "罗马尼亚语": "romanian",
+        "斯洛伐克语": "slovak",
+        "斯洛文尼亚语": "slovenian",
+        "塞尔维亚语": "serbian",
+        "瑞典语": "swedish",
+        "斯瓦希里语": "swahili",
+        "泰米尔语": "tamil",
+        "泰语": "thai",
+        "他加禄语": "tagalog",
+        "土耳其语": "turkish",
+        "乌克兰语": "ukrainian",
+        "乌尔都语": "urdu",
+        "越南语": "vietnamese",
         "粤语": "cantonese",
     }
 
@@ -106,9 +154,8 @@ class MeetingTranslatorApp(QWidget):
         self.s2s_provider = "aliyun"
         self.s2s_voice = "cherry"
 
-        # S2T 和 S2S 运行状态
         self.s2t_is_running = False
-        self.s2s_is_running = False
+        self._s2s_state = "idle"
 
         # 初始化设备管理器
         self.device_manager = AudioDeviceManager()
@@ -320,6 +367,7 @@ class MeetingTranslatorApp(QWidget):
         self.s2t_provider_combo.addItem("阿里云 Qwen (Alibaba Cloud)", "aliyun")
         self.s2t_provider_combo.addItem("豆包 Doubao (ByteDance)", "doubao")
         self.s2t_provider_combo.addItem("OpenAI Realtime", "openai")
+        self.s2t_provider_combo.addItem("OpenAI Translate (58 langs)", "openai_translate")
         self.s2t_provider_combo.currentIndexChanged.connect(self.on_s2t_provider_changed)
         s2t_provider_layout.addWidget(self.s2t_provider_combo, 1)
 
@@ -366,6 +414,7 @@ class MeetingTranslatorApp(QWidget):
         self.s2s_provider_combo.addItem("阿里云 Qwen (Alibaba Cloud)", "aliyun")
         self.s2s_provider_combo.addItem("豆包 Doubao (ByteDance)", "doubao")
         self.s2s_provider_combo.addItem("OpenAI Realtime", "openai")
+        self.s2s_provider_combo.addItem("OpenAI Translate (58 langs)", "openai_translate")
         self.s2s_provider_combo.currentIndexChanged.connect(self.on_s2s_provider_changed)
         s2s_provider_layout.addWidget(self.s2s_provider_combo, 1)
 
@@ -462,43 +511,25 @@ class MeetingTranslatorApp(QWidget):
     def _populate_language_combo(self, combo: QComboBox):
         """
         填充语言下拉框
-        使用所有 provider 支持的语言的并集
-        按流行程度排序：中文、英语始终在前两位，其他按流行程度
+        仅显示常用语言，按流行程度排序
         """
-        from translation_client_factory import TranslationClientFactory
-
-        # 收集所有语言
-        all_languages = set()
-        for provider in ["aliyun", "openai", "doubao"]:
-            languages = TranslationClientFactory.get_supported_languages(provider)
-            all_languages.update(languages.keys())
-
-        # 按流行程度排序
         popularity_order = [
             "中文",
             "英语",
-            "西班牙语",   # 世界第二大母语使用者
-            "法语",       # 国际通用语之一
-            "葡萄牙语",   # 巴西、葡萄牙等
-            "俄语",       # 广泛使用
-            "日语",       # 经济强国
-            "韩语",       # 经济强国
-            "德语",       # 欧洲主要语言
-            "意大利语",   # 欧洲主要语言
-            "粤语",       # 中文方言
+            "西班牙语",
+            "法语",
+            "葡萄牙语",
+            "阿拉伯语",
+            "印尼语",
+            "俄语",
+            "日语",
+            "韩语",
+            "德语",
+            "意大利语",
         ]
 
-        # 过滤出实际支持的语言，保持流行度顺序
-        sorted_languages = [lang for lang in popularity_order if lang in all_languages]
-
-        # 添加任何不在流行度列表中的语言（按字母顺序）
-        remaining_languages = sorted(all_languages - set(sorted_languages))
-        sorted_languages.extend(remaining_languages)
-
-        # 清空并添加（显示翻译后的名称，但数据仍使用原始键）
         combo.clear()
-        for lang in sorted_languages:
-            # 使用翻译后的语言名称显示，但存储原始键作为数据
+        for lang in popularity_order:
             display_name = self._get_language_display_name(lang)
             combo.addItem(display_name, lang)
 
@@ -569,7 +600,7 @@ class MeetingTranslatorApp(QWidget):
         from translation_client_factory import TranslationClientFactory
 
         # 从任意 provider 获取语言映射
-        for provider in ["aliyun", "openai", "doubao"]:
+        for provider in ["openai_translate", "aliyun", "openai", "doubao"]:
             languages = TranslationClientFactory.get_supported_languages(provider)
             if language_name in languages:
                 return languages[language_name]
@@ -629,6 +660,7 @@ class MeetingTranslatorApp(QWidget):
         original_texts = {
             "aliyun": "阿里云 Qwen (Alibaba Cloud)",
             "openai": "OpenAI Realtime",
+            "openai_translate": "OpenAI Translate (58 langs)",
             "doubao": "豆包 Doubao (ByteDance)"
         }
 
@@ -788,10 +820,14 @@ class MeetingTranslatorApp(QWidget):
 
     def on_s2s_start_stop_clicked(self):
         """S2S 启动/停止按钮点击事件"""
-        if self.s2s_is_running:
+        if self._s2s_state == "testing":
+            return
+        if self._s2s_state == "running":
             self._stop_s2s_service()
         else:
             self._start_s2s_service()
+            if self._s2s_state == "running":
+                self._update_s2s_ui_state("running")
 
     # ===== 音色试听 =====
 
@@ -1402,10 +1438,9 @@ class MeetingTranslatorApp(QWidget):
     # ===== S2S 服务管理 =====
 
     def _start_s2s_service(self):
-        """启动 S2S 服务（语音翻译）"""
+        """启动 S2S 服务（纯逻辑，不含 UI 更新）"""
         Out.status(self.i18n.t("status.starting_s2s"))
 
-        # 获取设备
         input_device = self.s2s_input_combo.currentData()
         output_device = self.s2s_output_combo.currentData()
 
@@ -1417,7 +1452,6 @@ class MeetingTranslatorApp(QWidget):
             return
 
         try:
-            # 1. 启动音频输出线程
             api_output_rate = self.PROVIDER_OUTPUT_RATES.get(self.s2s_provider, 24000)
             Out.status(f"S2S API 音频输出采样率: {api_output_rate} Hz (provider={self.s2s_provider})")
 
@@ -1434,15 +1468,14 @@ class MeetingTranslatorApp(QWidget):
             )
             self.s2s_audio_output.start()
 
-            # 2. 启动翻译服务（我的语言→会议语言，音频输出）
             selected_voice = self.s2s_voice_combo.currentData()
             my_lang_code = self._get_language_code(self.my_language)
             meeting_lang_code = self._get_language_code(self.meeting_language)
 
             self.s2s_translation_service = MeetingTranslationServiceWrapper(
                 api_key=None,
-                source_language=my_lang_code,  # 我的语言
-                target_language=meeting_lang_code,  # 会议语言
+                source_language=my_lang_code,
+                target_language=meeting_lang_code,
                 audio_enabled=True,
                 voice=selected_voice,
                 provider=self.s2s_provider,
@@ -1450,11 +1483,9 @@ class MeetingTranslatorApp(QWidget):
             )
             self.s2s_translation_service.start()
 
-            # 3. 启动音频捕获
             input_sample_rate = input_device['sample_rate']
             input_channels = input_device['channels']
 
-            # 获取该 provider 需要的输入采样率
             s2s_target_sample_rate = TranslationClientFactory.get_input_sample_rate(self.s2s_provider)
 
             Out.status(f"S2S 输入: {input_device['name']}, {input_sample_rate}Hz, {input_channels}声道")
@@ -1472,18 +1503,7 @@ class MeetingTranslatorApp(QWidget):
             )
             self.s2s_audio_capture.start()
 
-            # 4. 更新 UI
-            self.s2s_is_running = True
-            self.s2s_start_stop_btn.setText(self.i18n.t("ui.buttons.stop_s2s"))
-            self.s2s_start_stop_btn.setObjectName("stopButton")
-            self.s2s_start_stop_btn.style().unpolish(self.s2s_start_stop_btn)
-            self.s2s_start_stop_btn.style().polish(self.s2s_start_stop_btn)
-
-            self.s2s_input_combo.setEnabled(False)
-            self.s2s_output_combo.setEnabled(False)
-            self.s2s_voice_combo.setEnabled(False)
-            self.s2s_provider_combo.setEnabled(False)
-
+            self._s2s_state = "running"
             self.update_status("s2s_running", "running")
             Out.status(self.i18n.t("status.s2s_started"))
 
@@ -1493,10 +1513,9 @@ class MeetingTranslatorApp(QWidget):
             self._stop_s2s_service()
 
     def _stop_s2s_service(self):
-        """停止 S2S 服务"""
+        """停止 S2S 服务（纯逻辑，UI 由调用者/恢复方法负责）"""
         Out.status(self.i18n.t("status.stopping_s2s"))
 
-        # 停止音频捕获
         try:
             if self.s2s_audio_capture:
                 self.s2s_audio_capture.stop()
@@ -1504,7 +1523,6 @@ class MeetingTranslatorApp(QWidget):
         except Exception as e:
             Out.error(self.i18n.t("errors.s2s_capture_stop_failed", error=str(e)))
 
-        # 停止翻译服务
         try:
             if self.s2s_translation_service:
                 self.s2s_translation_service.stop()
@@ -1512,7 +1530,6 @@ class MeetingTranslatorApp(QWidget):
         except Exception as e:
             Out.error(self.i18n.t("errors.s2s_service_stop_failed", error=str(e)))
 
-        # 停止音频输出
         try:
             if self.s2s_audio_output:
                 self.s2s_audio_output.stop()
@@ -1520,20 +1537,52 @@ class MeetingTranslatorApp(QWidget):
         except Exception as e:
             Out.error(self.i18n.t("errors.s2s_output_stop_failed", error=str(e)))
 
-        # 更新 UI
-        self.s2s_is_running = False
-        self.s2s_start_stop_btn.setText(self.i18n.t("ui.buttons.start_s2s"))
-        self.s2s_start_stop_btn.setObjectName("")
-        self.s2s_start_stop_btn.style().unpolish(self.s2s_start_stop_btn)
-        self.s2s_start_stop_btn.style().polish(self.s2s_start_stop_btn)
-
-        self.s2s_input_combo.setEnabled(True)
-        self.s2s_output_combo.setEnabled(True)
-        self.s2s_voice_combo.setEnabled(True)
-        self.s2s_provider_combo.setEnabled(True)
-
+        was_testing = (self._s2s_state == "testing")
+        self._s2s_state = "idle"
+        if not was_testing:
+            self._update_s2s_ui_state("idle")
         self.update_status("ready", "ready")
         Out.status(self.i18n.t("status.s2s_stopped"))
+
+    def _update_s2s_ui_state(self, state: str):
+        """
+        根据 S2S 状态更新 UI
+        
+        Args:
+            state: "idle" | "running" | "testing"
+        """
+        if state == "idle":
+            self.s2s_start_stop_btn.setText(self.i18n.t("ui.buttons.start_s2s"))
+            self.s2s_start_stop_btn.setObjectName("")
+            self.s2s_start_stop_btn.setEnabled(True)
+            self.s2s_start_stop_btn.style().unpolish(self.s2s_start_stop_btn)
+            self.s2s_start_stop_btn.style().polish(self.s2s_start_stop_btn)
+            self._test_chain_btn.setEnabled(True)
+            self._test_mic_btn.setEnabled(True)
+            self.s2s_input_combo.setEnabled(True)
+            self.s2s_output_combo.setEnabled(True)
+            self.s2s_voice_combo.setEnabled(True)
+            self.s2s_provider_combo.setEnabled(True)
+        elif state == "running":
+            self.s2s_start_stop_btn.setText(self.i18n.t("ui.buttons.stop_s2s"))
+            self.s2s_start_stop_btn.setObjectName("stopButton")
+            self.s2s_start_stop_btn.setEnabled(True)
+            self.s2s_start_stop_btn.style().unpolish(self.s2s_start_stop_btn)
+            self.s2s_start_stop_btn.style().polish(self.s2s_start_stop_btn)
+            self._test_chain_btn.setEnabled(False)
+            self._test_mic_btn.setEnabled(False)
+            self.s2s_input_combo.setEnabled(False)
+            self.s2s_output_combo.setEnabled(False)
+            self.s2s_voice_combo.setEnabled(False)
+            self.s2s_provider_combo.setEnabled(False)
+        elif state == "testing":
+            self.s2s_start_stop_btn.setEnabled(False)
+            self._test_chain_btn.setEnabled(False)
+            self._test_mic_btn.setEnabled(False)
+            self.s2s_input_combo.setEnabled(False)
+            self.s2s_output_combo.setEnabled(False)
+            self.s2s_voice_combo.setEnabled(False)
+            self.s2s_provider_combo.setEnabled(False)
 
     # ===== 字幕窗口 =====
 
@@ -1553,6 +1602,8 @@ class MeetingTranslatorApp(QWidget):
         device = self.s2s_input_combo.currentData()
         if not device:
             Out.user_alert("Please select a microphone first", "No Mic Selected")
+            return
+        if self._s2s_state != "idle":
             return
         self._test_mic_btn.setEnabled(False)
         self._test_chain_btn.setEnabled(False)
@@ -1599,13 +1650,19 @@ class MeetingTranslatorApp(QWidget):
             except Exception as e:
                 Out.error(f"[Test Mic] Error: {e}")
             finally:
-                self._test_mic_btn.setEnabled(True)
-                self._test_chain_btn.setEnabled(True)
+                QMetaObject.invokeMethod(
+                    self, "_restore_test_buttons", Qt.QueuedConnection
+                )
 
         import threading
         threading.Thread(target=worker, daemon=True).start()
 
     def _test_s2s_chain(self):
+        if self._s2s_state != "idle":
+            if self._s2s_state == "running":
+                Out.user_alert("S2S is already running. Please stop it first.", "S2S Running")
+            return
+
         mic_dev = self.s2s_input_combo.currentData()
         vout_dev = self.s2s_output_combo.currentData()
         vin_dev = self._test_vmic_combo.currentData()
@@ -1618,14 +1675,10 @@ class MeetingTranslatorApp(QWidget):
         if not vin_dev:
             Out.user_alert("Please select a virtual mic for the chain test", "No Virtual Mic Selected")
             return
-        if self.s2s_is_running:
-            Out.user_alert("S2S is already running. Please stop it first.", "S2S Running")
-            return
 
-        self._test_mic_btn.setEnabled(False)
-        self._test_chain_btn.setEnabled(False)
+        self._s2s_state = "testing"
         self._test_chain_capturing = True
-        self._test_chain_error_count = 0
+        self._update_s2s_ui_state("testing")
 
         provider = self.s2s_provider
         Out.status(f"[Test Chain] Starting 8s S2S test with provider={provider}...")
@@ -1650,7 +1703,7 @@ class MeetingTranslatorApp(QWidget):
             self._start_s2s_service()
         except Exception as e:
             Out.status(f"[Test Chain] S2S start failed: {e}")
-            if self.s2s_is_running:
+            if self._s2s_state == "running":
                 self._stop_s2s_service()
             try:
                 vin_stream.stop_stream()
@@ -1658,8 +1711,19 @@ class MeetingTranslatorApp(QWidget):
                 vin_pa.terminate()
             except Exception:
                 pass
-            self._test_mic_btn.setEnabled(True)
-            self._test_chain_btn.setEnabled(True)
+            self._s2s_state = "idle"
+            self._update_s2s_ui_state("idle")
+            return
+
+        if self._s2s_state != "running":
+            try:
+                vin_stream.stop_stream()
+                vin_stream.close()
+                vin_pa.terminate()
+            except Exception:
+                pass
+            self._s2s_state = "idle"
+            self._update_s2s_ui_state("idle")
             return
 
         import threading
@@ -1689,8 +1753,11 @@ class MeetingTranslatorApp(QWidget):
                 pass
 
             Out.status("[Test Chain] Stopping S2S pipeline...")
-            if self.s2s_is_running:
-                self._stop_s2s_service()
+            if self._s2s_state == "running":
+                try:
+                    self._stop_s2s_service()
+                except Exception as e:
+                    Out.error(f"[Test Chain] Stop failed: {e}")
 
             if captured:
                 import numpy as _np
@@ -1710,8 +1777,9 @@ class MeetingTranslatorApp(QWidget):
             else:
                 Out.status("[Test Chain] FAIL - No audio captured from virtual mic")
 
-            self._test_mic_btn.setEnabled(True)
-            self._test_chain_btn.setEnabled(True)
+            QMetaObject.invokeMethod(
+                self, "_enable_test_chain_buttons", Qt.QueuedConnection
+            )
 
         threading.Thread(target=stop_and_playback, daemon=True).start()
 
@@ -1767,8 +1835,15 @@ class MeetingTranslatorApp(QWidget):
                 pass
         threading.Thread(target=_play, daemon=True).start()
 
+    @pyqtSlot()
+    def _enable_test_chain_buttons(self):
+        self._s2s_state = "idle"
+        self._update_s2s_ui_state("idle")
 
-    # ===== 字幕窗口 =====
+    @pyqtSlot()
+    def _restore_test_buttons(self):
+        if self._s2s_state == "idle":
+            self._update_s2s_ui_state("idle")
 
     # ===== 窗口关闭 =====
 
@@ -1779,7 +1854,7 @@ class MeetingTranslatorApp(QWidget):
         # 停止所有服务
         if self.s2t_is_running:
             self._stop_s2t_service()
-        if self.s2s_is_running:
+        if self._s2s_state != "idle":
             self._stop_s2s_service()
 
         # 保存字幕（如果有内容）

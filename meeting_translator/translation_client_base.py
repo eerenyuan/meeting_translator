@@ -16,6 +16,7 @@ class TranslationProvider(Enum):
     """Supported translation providers"""
     ALIYUN = "aliyun"
     OPENAI = "openai"
+    OPENAI_TRANSLATE = "openai_translate"
     GEMINI = "gemini"
     DEEPGRAM_ELEVENLABS = "deepgram_elevenlabs"
     DOUBAO = "doubao"

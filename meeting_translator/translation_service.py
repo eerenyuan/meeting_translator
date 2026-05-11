@@ -106,31 +106,24 @@ class MeetingTranslationService:
         if not self.is_running:
             return
 
-        Out.status("停止翻译服务...")
-
         self.is_running = False
 
-        # 取消消息处理任务
         if self.message_task:
             self.message_task.cancel()
             try:
                 await asyncio.wait_for(self.message_task, timeout=2.0)
             except (asyncio.CancelledError, asyncio.TimeoutError):
-                Out.debug("消息处理任务已取消")
+                pass
             except Exception as e:
                 Out.debug(f"取消消息任务时出错: {e}")
 
-        # 关闭客户端
         if self.client:
             try:
                 await asyncio.wait_for(self.client.close(), timeout=2.0)
-                Out.debug("WebSocket 客户端已关闭")
             except asyncio.TimeoutError:
                 Out.warning("关闭 WebSocket 超时")
             except Exception as e:
                 Out.debug(f"关闭客户端时出错: {e}")
-
-        Out.status("翻译服务已停止")
 
     async def send_audio_chunk(self, audio_data: bytes):
         """
@@ -341,54 +334,40 @@ class MeetingTranslationServiceWrapper:
         Out.status("正在停止翻译服务...")
         self.is_running = False
 
-        # 1. 停止翻译服务并等待完成
         if self.service and self.loop:
             try:
                 future = asyncio.run_coroutine_threadsafe(self.service.stop(), self.loop)
-                future.result(timeout=3)  # 等待 stop() 完成，最多等待 3 秒
-                # Out.debug("翻译服务已停止")
+                future.result(timeout=3)
             except Exception as e:
                 Out.warning(f"停止翻译服务时出错: {e}")
 
-        # 2. 取消所有剩余任务
         if self.loop and self.loop.is_running():
             try:
-                # 获取所有待处理的任务并取消
                 pending = asyncio.all_tasks(self.loop)
                 for task in pending:
                     task.cancel()
-                # Out.debug(f"已取消 {len(pending)} 个待处理任务")
             except Exception as e:
                 Out.debug(f"取消任务时出错: {e}")
 
-        # 3. 停止事件循环
         if self.loop and self.loop.is_running():
             self.loop.call_soon_threadsafe(self.loop.stop)
 
-        # 4. 等待线程结束
         if self.thread and self.thread.is_alive():
             self.thread.join(timeout=3)
             if self.thread.is_alive():
                 Out.warning("翻译服务线程未能在 3 秒内结束")
 
-        # 5. 清理事件循环
         if self.loop:
             try:
-                # 确保事件循环已停止
                 if self.loop.is_running():
                     self.loop.stop()
-
-                # 关闭事件循环
                 if not self.loop.is_closed():
                     self.loop.close()
-                    # Out.debug("事件循环已关闭")
             except Exception as e:
                 pass
-                # Out.debug(f"关闭事件循环时出错: {e}")
             finally:
                 self.loop = None
 
-        # 6. 清理服务对象
         self.service = None
         self.thread = None
 

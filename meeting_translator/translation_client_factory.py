@@ -9,6 +9,7 @@ import os
 from translation_client_base import BaseTranslationClient, TranslationProvider
 from qwen_client import QwenClient
 from openai_client import OpenAIClient
+from openai_translate_client import OpenAITranslateClient
 from doubao_client import DoubaoClient
 
 
@@ -101,6 +102,18 @@ class TranslationClientFactory:
                 **openai_kwargs
             )
 
+        elif provider == "openai_translate":
+            return OpenAITranslateClient(
+                api_key=api_key,
+                source_language=source_language,
+                target_language=target_language,
+                voice=voice,
+                audio_enabled=audio_enabled,
+                audio_queue=audio_queue,
+                glossary=glossary,
+                **kwargs
+            )
+
         elif provider == "doubao":
             # Doubao requires both app_id and access_token
             access_token = os.getenv("doubao_access_token")
@@ -121,7 +134,7 @@ class TranslationClientFactory:
         else:
             raise ValueError(
                 f"Unsupported provider: {provider}. "
-                f"Supported providers: aliyun, openai, doubao"
+                f"Supported providers: aliyun, openai, openai_translate, doubao"
             )
 
     @staticmethod
@@ -131,6 +144,7 @@ class TranslationClientFactory:
             "aliyun": ["DASHSCOPE_API_KEY", "ALIYUN_API_KEY"],
             "alibaba": ["DASHSCOPE_API_KEY", "ALIYUN_API_KEY"],
             "openai": ["OPENAI_API_KEY"],
+            "openai_translate": ["OPENAI_API_KEY"],
             "doubao": ["doubao_app_id", "DOUBAO_APP_ID"],
             "gemini": ["GEMINI_API_KEY", "GOOGLE_API_KEY"],
             "deepgram": ["DEEPGRAM_API_KEY"],
@@ -153,12 +167,13 @@ class TranslationClientFactory:
     def _get_default_voice_for_provider(provider: str) -> str:
         """Get default voice for given provider"""
         defaults = {
-            "aliyun": "cherry",  # Qwen uses lowercase
+            "aliyun": "cherry",
             "alibaba": "cherry",
-            "openai": "marin",  # OpenAI recommends marin or cedar
-            "doubao": "",  # Doubao doesn't support voice selection (voice cloning)
+            "openai": "marin",
+            "openai_translate": "",
+            "doubao": "",
             "gemini": "en-US-Neural2-F",
-            "elevenlabs": "EXAVITQu4vr4xnSDxMaL"  # Sarah
+            "elevenlabs": "EXAVITQu4vr4xnSDxMaL"
         }
         return defaults.get(provider, "")
 
@@ -179,6 +194,8 @@ class TranslationClientFactory:
             return QwenClient.get_supported_voices()
         elif provider == "openai":
             return OpenAIClient.get_supported_voices()
+        elif provider == "openai_translate":
+            return OpenAITranslateClient.get_supported_voices()
         elif provider == "doubao":
             return DoubaoClient.get_supported_voices()
         else:
@@ -202,6 +219,8 @@ class TranslationClientFactory:
             return QwenClient.get_supported_voices_i18n(i18n)
         elif provider == "openai":
             return OpenAIClient.get_supported_voices_i18n(i18n)
+        elif provider == "openai_translate":
+            return OpenAITranslateClient.get_supported_voices_i18n(i18n)
         elif provider == "doubao":
             return DoubaoClient.get_supported_voices()  # Doubao doesn't have voice metadata
         else:
@@ -224,6 +243,8 @@ class TranslationClientFactory:
             return QwenClient.get_supported_languages()
         elif provider == "openai":
             return OpenAIClient.get_supported_languages()
+        elif provider == "openai_translate":
+            return OpenAITranslateClient.get_supported_languages()
         elif provider == "doubao":
             return DoubaoClient.get_supported_languages()
         else:
@@ -240,6 +261,7 @@ class TranslationClientFactory:
         return {
             "aliyun": "Alibaba Cloud (Aliyun)",
             "openai": "OpenAI Realtime API",
+            "openai_translate": "OpenAI Translate (58 langs)",
             "doubao": "Doubao (ByteDance)"
         }
 
@@ -278,7 +300,7 @@ class TranslationClientFactory:
             list: List of provider names that support both languages
         """
         available_providers = []
-        all_providers = ["aliyun", "openai", "doubao"]
+        all_providers = ["aliyun", "openai", "openai_translate", "doubao"]
 
         for provider in all_providers:
             # Check if provider supports both languages (bidirectional)
@@ -305,6 +327,7 @@ class TranslationClientFactory:
             "aliyun": 16000,
             "alibaba": 16000,
             "openai": 24000,
+            "openai_translate": 24000,
             "doubao": 16000,
         }
         return sample_rates.get(provider, 16000)
