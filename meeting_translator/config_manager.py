@@ -115,7 +115,7 @@ class ConfigManager:
 
             # 检查 s2t.provider
             if "provider" in s2t:
-                valid_providers = ["aliyun", "doubao", "openai"]
+                valid_providers = ["aliyun", "doubao", "openai", "openai_translate"]
                 if s2t["provider"] not in valid_providers:
                     Out.warning(f"配置中 s2t.provider 值无效: {s2t['provider']}")
                     return False
@@ -136,7 +136,7 @@ class ConfigManager:
 
             # 检查 s2s.provider
             if "provider" in s2s:
-                valid_providers = ["aliyun", "doubao", "openai"]
+                valid_providers = ["aliyun", "doubao", "openai", "openai_translate"]
                 if s2s["provider"] not in valid_providers:
                     Out.warning(f"配置中 s2s.provider 值无效: {s2s['provider']}")
                     return False

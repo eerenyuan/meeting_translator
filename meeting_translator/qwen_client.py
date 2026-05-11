@@ -26,21 +26,9 @@ from output_manager import Out
 
 
 def build_translation_instructions(glossary: Dict[str, str]) -> str:
-    """
-    构建翻译指令（极简版本）
-
-    Args:
-        glossary: 词汇表字典
-
-    Returns:
-        instructions 字符串
-    """
     if not glossary:
         return ""
-
-    # 使用紧凑的单行格式，避免多行列表被误解为需要输出的内容
-    terms = "/n".join([f"【{zh}:{en}】" for zh, en in glossary.items()])
-
+    terms = "\n".join([f"【{zh}:{en}】" for zh, en in glossary.items()])
     instructions = f"""常用词表: {terms}. """
     return instructions
 
@@ -63,14 +51,25 @@ class QwenClient(BaseTranslationClient):
 
     # 音色元数据：voice_id -> (name, gender, recommended)
     VOICE_METADATA = {
-        "cherry": ("Cherry", "female", False),
-        "nofish": ("Nofish", "male", False),
+        "Cherry": ("Cherry", "female", True),
+        "Nofish": ("Nofish", "male", False),
+        "Jada": ("Jada", "female", False),
+        "Dylan": ("Dylan", "male", False),
+        "Sunny": ("Sunny", "female", False),
+        "Peter": ("Peter", "male", False),
+        "Kiki": ("Kiki", "female", False),
+        "Eric": ("Eric", "male", False),
     }
 
-    # 支持的音色列表（来源：阿里云官方文档，向后兼容）
     SUPPORTED_VOICES = {
-        "cherry": "Cherry (女声)",
-        "nofish": "Nofish (男声)",
+        "Cherry": "Cherry (女声)",
+        "Nofish": "Nofish (男声)",
+        "Jada": "Jada (女声)",
+        "Dylan": "Dylan (男声)",
+        "Sunny": "Sunny (女声)",
+        "Peter": "Peter (男声)",
+        "Kiki": "Kiki (女声)",
+        "Eric": "Eric (男声)",
     }
 
     # 支持的语言列表
@@ -87,7 +86,28 @@ class QwenClient(BaseTranslationClient):
         "意大利语": "it",
         "韩语": "ko",
         "日语": "ja",
-        #"粤语": "yue",api只对一种小众音色支持粤语，就不折腾了。
+        "粤语": "yue",
+        "印尼语": "id",
+        "越南语": "vi",
+        "泰语": "th",
+        "阿拉伯语": "ar",
+        "印地语": "hi",
+        "希腊语": "el",
+        "土耳其语": "tr",
+    }
+
+    SUPPORTED_LANGUAGES_S2S = {
+        "英语": "en",
+        "中文": "zh",
+        "俄语": "ru",
+        "法语": "fr",
+        "德语": "de",
+        "葡萄牙语": "pt",
+        "西班牙语": "es",
+        "意大利语": "it",
+        "韩语": "ko",
+        "日语": "ja",
+        "粤语": "yue",
     }
 
     def __init__(
@@ -171,12 +191,11 @@ class QwenClient(BaseTranslationClient):
 
     @classmethod
     def get_supported_languages(cls) -> Dict[str, str]:
-        """获取支持的语言列表
-
-        Returns:
-            Dict[str, str]: 显示名称 -> 语种代码
-        """
         return cls.SUPPORTED_LANGUAGES.copy()
+
+    @classmethod
+    def get_supported_languages_s2s(cls) -> Dict[str, str]:
+        return cls.SUPPORTED_LANGUAGES_S2S.copy()
 
     async def connect(self):
         """建立 WebSocket 连接"""
@@ -196,16 +215,14 @@ class QwenClient(BaseTranslationClient):
 
     async def configure_session(self):
         """配置翻译会话"""
-        # 基础配置（S2T 模式）
         config = {
             "event_id": f"event_{int(time.time() * 1000)}",
             "type": "session.update",
             "session": {
-                "modalities": ["text"],  # S2T 模式：只有文本
+                "modalities": ["text"],
                 "input_audio_format": "pcm16",
                 "translation": {
                     "language": self.target_language,
-                    "instructions": build_translation_instructions(self.glossary),
                 },
                 "turn_detection": {
                     "type": "server_vad",
@@ -216,13 +233,16 @@ class QwenClient(BaseTranslationClient):
             }
         }
 
-        # S2S 模式：override 为语音到语音
+        if self.glossary:
+            config["session"]["translation"]["corpus"] = {
+                "phrases": dict(list(self.glossary.items())[:50])
+            }
+
         if self.audio_enabled:
             config["session"]["modalities"] = ["text", "audio"]
             config["session"]["voice"] = self.voice
             config["session"]["output_audio_format"] = "pcm16"
             config["session"]["audio"] = {
-                # 注意：rate 参数已确认无效，已移除
                 "pitch": 1.0,
                 "volume": 50
             }

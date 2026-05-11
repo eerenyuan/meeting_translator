@@ -227,12 +227,13 @@ class TranslationClientFactory:
             return {}
 
     @staticmethod
-    def get_supported_languages(provider: str) -> Dict[str, str]:
+    def get_supported_languages(provider: str, mode: str = "s2t") -> Dict[str, str]:
         """
         Get supported languages for a provider
 
         Args:
             provider: Provider name (aliyun, openai, doubao)
+            mode: "s2t" (all languages) or "s2s" (audio+text only)
 
         Returns:
             Dict mapping display names to language codes
@@ -240,6 +241,8 @@ class TranslationClientFactory:
         provider = provider.lower()
 
         if provider == "aliyun" or provider == "alibaba":
+            if mode == "s2s":
+                return QwenClient.get_supported_languages_s2s()
             return QwenClient.get_supported_languages()
         elif provider == "openai":
             return OpenAIClient.get_supported_languages()
@@ -266,45 +269,19 @@ class TranslationClientFactory:
         }
 
     @staticmethod
-    def supports_language_pair(provider: str, source_lang: str, target_lang: str) -> bool:
-        """
-        Check if a provider supports the given language pair
-
-        Args:
-            provider: Provider name (aliyun, openai, doubao)
-            source_lang: Source language code (e.g., "zh", "en")
-            target_lang: Target language code (e.g., "zh", "en")
-
-        Returns:
-            bool: True if provider supports both languages
-        """
-        languages = TranslationClientFactory.get_supported_languages(provider)
-        # Check if both language codes are in the supported languages
+    def supports_language_pair(provider: str, source_lang: str, target_lang: str, mode: str = "s2t") -> bool:
+        languages = TranslationClientFactory.get_supported_languages(provider, mode=mode)
         source_supported = any(lang_code == source_lang for lang_code in languages.values())
         target_supported = any(lang_code == target_lang for lang_code in languages.values())
         return source_supported and target_supported
 
     @staticmethod
-    def get_available_providers_for_languages(my_lang_code: str, meeting_lang_code: str) -> list:
-        """
-        Get list of providers that support the given language pair
-
-        For S2S: my_lang_code -> meeting_lang_code (I speak my language, they hear meeting language)
-        For S2T: meeting_lang_code -> my_lang_code (They speak meeting language, I see my language)
-
-        Args:
-            my_lang_code: My language code (e.g., "zh", "en")
-            meeting_lang_code: Meeting language code (e.g., "zh", "en")
-
-        Returns:
-            list: List of provider names that support both languages
-        """
+    def get_available_providers_for_languages(my_lang_code: str, meeting_lang_code: str, mode: str = "s2t") -> list:
         available_providers = []
         all_providers = ["aliyun", "openai", "openai_translate", "doubao"]
 
         for provider in all_providers:
-            # Check if provider supports both languages (bidirectional)
-            if TranslationClientFactory.supports_language_pair(provider, my_lang_code, meeting_lang_code):
+            if TranslationClientFactory.supports_language_pair(provider, my_lang_code, meeting_lang_code, mode=mode):
                 available_providers.append(provider)
 
         return available_providers

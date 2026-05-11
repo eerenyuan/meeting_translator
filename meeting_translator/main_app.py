@@ -38,6 +38,7 @@ from translation_service import MeetingTranslationServiceWrapper
 from translation_client_factory import TranslationClientFactory
 from subtitle_window import SubtitleWindow
 from config_manager import ConfigManager
+from glossary_manager import GlossaryManager
 from output_manager import Out, MessageType
 from output_handlers import ConsoleHandler, LogFileHandler, AlertHandler, SubtitleHandler
 from paths import LOGS_DIR, RECORDS_DIR, ensure_directories, get_initialization_message
@@ -134,6 +135,7 @@ class MeetingTranslatorApp(QWidget):
 
         # 初始化配置管理器（需要尽早初始化，因为i18n依赖它）
         self.config_manager = ConfigManager()
+        self.glossary_manager = GlossaryManager()
 
         # 初始化 i18n（从配置加载语言设置）
         self.i18n = get_i18n()
@@ -636,31 +638,28 @@ class MeetingTranslatorApp(QWidget):
         my_lang_code = self._get_language_code(self.my_language)
         meeting_lang_code = self._get_language_code(self.meeting_language)
 
-        # 获取支持该语言对的 providers
-        available_providers = TranslationClientFactory.get_available_providers_for_languages(
-            my_lang_code, meeting_lang_code
+        s2t_providers = TranslationClientFactory.get_available_providers_for_languages(
+            my_lang_code, meeting_lang_code, mode="s2t"
+        )
+        s2s_providers = TranslationClientFactory.get_available_providers_for_languages(
+            my_lang_code, meeting_lang_code, mode="s2s"
         )
 
-        # 更新 S2T provider combo
-        self._update_provider_combo(self.s2t_provider_combo, available_providers)
+        self._update_provider_combo(self.s2t_provider_combo, s2t_providers)
+        self._update_provider_combo(self.s2s_provider_combo, s2s_providers)
 
-        # 更新 S2S provider combo
-        self._update_provider_combo(self.s2s_provider_combo, available_providers)
-
-        # 如果当前 provider 不在可用列表中，切换到第一个可用的
-        if self.s2t_provider not in available_providers and available_providers:
-            new_provider = available_providers[0]
+        if self.s2t_provider not in s2t_providers and s2t_providers:
+            new_provider = s2t_providers[0]
             self.s2t_provider = new_provider
             self.config_manager.set_s2t_provider(new_provider)
-            # 更新 combo 选择
             for i in range(self.s2t_provider_combo.count()):
                 if self.s2t_provider_combo.itemData(i) == new_provider:
                     self.s2t_provider_combo.setCurrentIndex(i)
                     break
             Out.status(f"S2T provider 已切换到: {new_provider}")
 
-        if self.s2s_provider not in available_providers and available_providers:
-            new_provider = available_providers[0]
+        if self.s2s_provider not in s2s_providers and s2s_providers:
+            new_provider = s2s_providers[0]
             self.s2s_provider = new_provider
             self.config_manager.set_s2s_provider(new_provider)
             # 更新 combo 选择
@@ -1310,10 +1309,11 @@ class MeetingTranslatorApp(QWidget):
 
             self.s2t_translation_service = MeetingTranslationServiceWrapper(
                 api_key=None,
-                source_language=meeting_lang_code,  # 会议语言
-                target_language=my_lang_code,  # 我的语言
+                source_language=meeting_lang_code,
+                target_language=my_lang_code,
                 audio_enabled=False,
-                provider=self.s2t_provider
+                provider=self.s2t_provider,
+                glossary=self.glossary_manager.glossary
             )
             self.s2t_translation_service.start()
 
@@ -1504,7 +1504,8 @@ class MeetingTranslatorApp(QWidget):
                 audio_enabled=True,
                 voice=selected_voice,
                 provider=self.s2s_provider,
-                on_audio_chunk=self.s2s_audio_output.write_audio_chunk
+                on_audio_chunk=self.s2s_audio_output.write_audio_chunk,
+                glossary=self.glossary_manager.glossary
             )
             self.s2s_translation_service.start()
 
@@ -1566,7 +1567,7 @@ class MeetingTranslatorApp(QWidget):
         self._s2s_state = "idle"
         if not was_testing:
             self._update_s2s_ui_state("idle")
-        self.update_status("ready", "ready")
+            self.update_status("ready", "ready")
         Out.status(self.i18n.t("status.s2s_stopped"))
 
     def _update_s2s_ui_state(self, state: str):

@@ -27,20 +27,9 @@ class MeetingTranslationService:
         audio_enabled: bool = False,
         voice: Optional[str] = None,
         on_audio_chunk: Optional[Callable[[bytes], None]] = None,
-        provider: Optional[str] = None
+        provider: Optional[str] = None,
+        glossary: Optional[dict] = None
     ):
-        """
-        初始化翻译服务
-
-        Args:
-            api_key: API Key（或通过环境变量自动获取）
-            source_language: 源语言（默认英文）
-            target_language: 目标语言（默认中文）
-            audio_enabled: 是否启用音频输出（说模式需要）
-            voice: 语音选择（provider-specific，或自动使用默认值）
-            on_audio_chunk: 音频数据回调
-            provider: 翻译服务提供商（aliyun/openai/doubao，默认从环境变量读取）
-        """
         self.api_key = api_key
         self.source_language = source_language
         self.target_language = target_language
@@ -48,6 +37,7 @@ class MeetingTranslationService:
         self.voice = voice
         self.on_audio_chunk = on_audio_chunk
         self.provider = provider
+        self.glossary = glossary or {}
 
         self.client = None
         self.is_running = False
@@ -80,7 +70,7 @@ class MeetingTranslationService:
                 voice=self.voice,
                 audio_enabled=self.audio_enabled,
                 audio_queue=audio_queue,  # 传递内部队列
-                glossary=None  # 不使用词汇表
+                glossary=self.glossary
             )
 
             # 连接到服务
@@ -274,7 +264,8 @@ class MeetingTranslationServiceWrapper:
         audio_enabled: bool = False,
         voice: Optional[str] = None,
         on_audio_chunk: Optional[Callable[[bytes], None]] = None,
-        provider: Optional[str] = None
+        provider: Optional[str] = None,
+        glossary: Optional[dict] = None
     ):
         self.api_key = api_key
         self.source_language = source_language
@@ -283,6 +274,7 @@ class MeetingTranslationServiceWrapper:
         self.voice = voice
         self.on_audio_chunk = on_audio_chunk
         self.provider = provider
+        self.glossary = glossary or {}
 
         self.service = None
         self.loop = None
@@ -311,7 +303,8 @@ class MeetingTranslationServiceWrapper:
                 audio_enabled=self.audio_enabled,
                 voice=self.voice,
                 on_audio_chunk=self.on_audio_chunk,
-                provider=self.provider
+                provider=self.provider,
+                glossary=self.glossary
             )
 
             # 启动翻译服务

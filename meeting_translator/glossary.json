@@ -1,6 +1,6 @@
 {
-  "description": "Translation glossary for meeting translator (Doubao AST API)",
-  "glossary": {
+  "description": "Translation glossary for meeting translator",
+  "translations": {
     "我们公司": "ABC Company",
     "核心产品": "Core Product",
     "业务系统": "Business System",
@@ -12,6 +12,6 @@
     "同声传译": "Simultaneous Interpretation",
     "豆包": "Doubao",
     "字节跳动": "ByteDance",
-	"猹猫":"Ren Xiaoyao"
+    "猹猫": "Ren Xiaoyao"
   }
 }
