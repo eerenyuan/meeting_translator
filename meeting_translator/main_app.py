@@ -1313,7 +1313,7 @@ class MeetingTranslatorApp(QWidget):
                 target_language=my_lang_code,
                 audio_enabled=False,
                 provider=self.s2t_provider,
-                glossary=self.glossary_manager.glossary
+                glossary=self.glossary_manager.build_for_direction(meeting_lang_code, my_lang_code)
             )
             self.s2t_translation_service.start()
 
@@ -1505,7 +1505,7 @@ class MeetingTranslatorApp(QWidget):
                 voice=selected_voice,
                 provider=self.s2s_provider,
                 on_audio_chunk=self.s2s_audio_output.write_audio_chunk,
-                glossary=self.glossary_manager.glossary
+                glossary=self.glossary_manager.build_for_direction(my_lang_code, meeting_lang_code)
             )
             self.s2s_translation_service.start()
 

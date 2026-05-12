@@ -1,184 +1,132 @@
 """
 术语表管理器
-用于在翻译后进行专有名词替换
+支持多语言术语映射，根据翻译方向自动构建词汇表
+
+内部格式（list of dicts）：
+  translations: [
+    {"zh": "宇信科技", "en": "Yusys Technology", "ja": "宇信科技"},
+    {"zh": "信贷系统", "en": "Loan Management System"}
+  ]
+
+每条术语是一个语言→术语的映射，翻译时根据 source/target 语言自动提取。
 """
 
 import json
 import os
 import re
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 from pathlib import Path
 
 from paths import CONFIG_DIR, ensure_directories
 
 
 class GlossaryManager:
-    """术语表管理器"""
 
     def __init__(self, glossary_file: str = None):
-        """
-        Args:
-            glossary_file: 术语表文件路径（JSON格式）
-        """
         if glossary_file is None:
-            # 确保目录存在
             ensure_directories()
             glossary_file = CONFIG_DIR / "glossary.json"
 
         self.glossary_file = Path(glossary_file)
-        self.glossary: Dict[str, str] = self._load_glossary()
+        self.terms: List[Dict[str, str]] = self._load_glossary()
 
-        # 编译替换模式（提高效率）
-        self._compile_patterns()
-
-    def _load_glossary(self) -> Dict[str, str]:
-        """加载术语表"""
+    def _load_glossary(self) -> List[Dict[str, str]]:
         if os.path.exists(self.glossary_file):
             try:
                 with open(self.glossary_file, 'r', encoding='utf-8') as f:
                     data = json.load(f)
-                    return data.get("translations", {})
+                raw = data.get("translations", [])
+                if isinstance(raw, list):
+                    return [t for t in raw if isinstance(t, dict) and len(t) >= 2]
+                if isinstance(raw, dict):
+                    return self._migrate_legacy_format(raw)
             except Exception as e:
                 print(f"加载术语表失败: {e}")
-
-        # 返回默认术语表
         return self._get_default_glossary()
 
-    def _get_default_glossary(self) -> Dict[str, str]:
-        """获取默认术语表"""
-        return {
-            # 公司名称示例
-            "Example Company": "Example Company",
-            "Sample Corp": "Sample Corporation",
+    def _migrate_legacy_format(self, old: Dict[str, str]) -> List[Dict[str, str]]:
+        result = []
+        for key, value in old.items():
+            key_is_zh = any('\u4e00' <= c <= '\u9fff' for c in key)
+            val_is_zh = any('\u4e00' <= c <= '\u9fff' for c in value)
+            if key_is_zh and not val_is_zh:
+                result.append({"zh": key, "en": value})
+            elif not key_is_zh and val_is_zh:
+                result.append({"en": key, "zh": value})
+            else:
+                result.append({"zh": key, "en": value})
+        return result
 
-            # 人名示例
-            "Zhang Manager": "Mr. Zhang",
-            "Li Manager": "Ms. Li",
+    def _get_default_glossary(self) -> List[Dict[str, str]]:
+        return [
+            {"zh": "人工智能", "en": "Artificial Intelligence"},
+            {"zh": "机器学习", "en": "Machine Learning"},
+            {"zh": "深度学习", "en": "Deep Learning"},
+            {"zh": "自然语言处理", "en": "Natural Language Processing"},
+            {"zh": "语音识别", "en": "Speech Recognition"},
+            {"zh": "同声传译", "en": "Simultaneous Interpretation"},
+        ]
 
-            # 产品术语示例
-            "core product": "Core Product",
-            "business system": "Business System",
-            "data platform": "Data Platform"
-        }
-
-    def _compile_patterns(self):
-        """编译正则表达式模式（用于更智能的替换）"""
-        self.patterns: List[Tuple[re.Pattern, str]] = []
-
-        for wrong, correct in self.glossary.items():
-            # 创建不区分大小写但保留边界的模式
-            # 使用 \b 确保只匹配完整单词
-            pattern = re.compile(r'\b' + re.escape(wrong) + r'\b', re.IGNORECASE)
-            self.patterns.append((pattern, correct))
-
-    def apply(self, text: str) -> str:
+    def build_for_direction(self, source_lang: str, target_lang: str) -> Dict[str, str]:
         """
-        对文本应用术语替换
+        根据翻译方向构建 {源术语: 目标术语} 字典
 
         Args:
-            text: 原始翻译文本
+            source_lang: 源语言代码 (e.g., "zh", "en")
+            target_lang: 目标语言代码 (e.g., "en", "ja")
 
         Returns:
-            替换后的文本
+            Dict mapping source terms to target terms
         """
+        result = {}
+        for term in self.terms:
+            src_text = term.get(source_lang)
+            tgt_text = term.get(target_lang)
+            if src_text and tgt_text and src_text != tgt_text:
+                result[src_text] = tgt_text
+        return result
+
+    def apply(self, text: str, source_lang: str, target_lang: str) -> str:
+        glossary = self.build_for_direction(source_lang, target_lang)
+        if not glossary:
+            return text
         result = text
-
-        for pattern, replacement in self.patterns:
-            result = pattern.sub(replacement, result)
-
+        for wrong, correct in glossary.items():
+            pattern = re.compile(re.escape(wrong), re.IGNORECASE)
+            result = pattern.sub(correct, result)
         return result
 
     def save_glossary(self):
-        """保存术语表到文件"""
         data = {
-            "translations": self.glossary,
+            "translations": self.terms,
             "description": "Translation glossary for meeting translator"
         }
-
         try:
             with open(self.glossary_file, 'w', encoding='utf-8') as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
         except Exception as e:
             print(f"保存术语表失败: {e}")
 
-    def add_term(self, wrong: str, correct: str):
-        """
-        添加术语
-
-        Args:
-            wrong: 错误的翻译
-            correct: 正确的翻译
-        """
-        self.glossary[wrong] = correct
-        self._compile_patterns()
-        self.save_glossary()
-
-    def remove_term(self, wrong: str):
-        """删除术语"""
-        if wrong in self.glossary:
-            del self.glossary[wrong]
-            self._compile_patterns()
+    def add_term(self, term: Dict[str, str]):
+        if len(term) >= 2:
+            self.terms.append(term)
             self.save_glossary()
 
-    def get_context_for_corpus(self) -> str:
-        """
-        生成用于 corpus.text 的上下文
-
-        基于术语表生成上下文文本，用于提高识别准确度
-        """
-        # 提取中文术语（从 correct 值中识别）
-        chinese_terms = []
-        english_terms = []
-
-        for wrong, correct in self.glossary.items():
-            # 假设包含中文字符的是中文术语
-            if any('\u4e00' <= char <= '\u9fff' for char in correct):
-                chinese_terms.append(correct)
-            else:
-                english_terms.append(correct)
-
-        # 构建上下文
-        context_parts = []
-
-        if chinese_terms:
-            context_parts.append("关键术语：\n" + "、".join(chinese_terms))
-
-        if english_terms:
-            context_parts.append("English terms:\n" + ", ".join(english_terms))
-
-        # 添加翻译对照
-        translation_pairs = [f"{wrong} → {correct}" for wrong, correct in self.glossary.items()]
-        context_parts.append("翻译对照：\n" + "\n".join(translation_pairs))
-
-        return "\n\n".join(context_parts)
+    def remove_term(self, index: int):
+        if 0 <= index < len(self.terms):
+            del self.terms[index]
+            self.save_glossary()
 
 
-# 使用示例
 if __name__ == "__main__":
     manager = GlossaryManager()
+    print(f"Loaded {len(manager.terms)} terms")
+    for t in manager.terms:
+        print(f"  {t}")
 
-    # 测试替换
-    test_sentences = [
-        "I am Zhai Hanbin from Yuxin Technology.",
-        "Our credit system is very advanced.",
-        "We offer online cash loan services.",
-        "Ren Xiaoyao works at Yu Xin Technology."
-    ]
+    print(f"\nzh→en: {manager.build_for_direction('zh', 'en')}")
+    print(f"en→zh: {manager.build_for_direction('en', 'zh')}")
+    print(f"zh→ja: {manager.build_for_direction('zh', 'ja')}")
 
-    print("术语表替换测试:\n")
-    print("=" * 80)
-
-    for sentence in test_sentences:
-        replaced = manager.apply(sentence)
-        if sentence != replaced:
-            print(f"原文: {sentence}")
-            print(f"替换: {replaced}")
-            print("-" * 80)
-        else:
-            print(f"无需替换: {sentence}")
-            print("-" * 80)
-
-    # 生成 corpus 上下文
-    print("\n\n生成的 corpus.text 上下文:\n")
-    print("=" * 80)
-    print(manager.get_context_for_corpus())
+    test = "我们公司的人工智能技术很厉害"
+    print(f"\nApply zh→en: '{test}' → '{manager.apply(test, 'zh', 'en')}'")

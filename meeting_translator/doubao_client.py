@@ -286,10 +286,11 @@ class DoubaoClient(BaseTranslationClient):
 
             # 配置词汇表
             if self.glossary:
-                # 设置 glossary_list (map<string, string>)
                 for source_term, target_term in self.glossary.items():
                     request.request.corpus.glossary_list[source_term] = target_term
-                self.output_debug(f"已加载 {len(self.glossary)} 个词汇表术语到豆包 corpus")
+                self.output_status(f"[DOUBAO] Glossary loaded: {len(self.glossary)} terms")
+                for s, t in list(self.glossary.items())[:5]:
+                    self.output_debug(f"  {s} -> {t}")
 
             await self.ws.send(request.SerializeToString())
 

@@ -1,17 +1,18 @@
 {
   "description": "Translation glossary for meeting translator",
-  "translations": {
-    "我们公司": "ABC Company",
-    "核心产品": "Core Product",
-    "业务系统": "Business System",
-    "人工智能": "Artificial Intelligence",
-    "机器学习": "Machine Learning",
-    "深度学习": "Deep Learning",
-    "自然语言处理": "Natural Language Processing",
-    "语音识别": "Speech Recognition",
-    "同声传译": "Simultaneous Interpretation",
-    "豆包": "Doubao",
-    "字节跳动": "ByteDance",
-    "猹猫": "Ren Xiaoyao"
-  }
+  "translations": [
+    {"zh": "宇信", "en": "Yusys"},
+	{"zh": "珊瑚支付", "en": "coral payment"},
+    {"zh": "核心产品", "en": "Core Product"},
+    {"zh": "业务系统", "en": "Business System"},
+    {"zh": "人工智能", "en": "Artificial Intelligence"},
+    {"zh": "机器学习", "en": "Machine Learning"},
+    {"zh": "深度学习", "en": "Deep Learning"},
+    {"zh": "自然语言处理", "en": "Natural Language Processing"},
+    {"zh": "语音识别", "en": "Speech Recognition"},
+    {"zh": "同声传译", "en": "Simultaneous Interpretation"},
+    {"zh": "豆包", "en": "Doubao"},
+    {"zh": "字节跳动", "en": "ByteDance"},
+    {"zh": "猹猫", "en": "Ren Xiaoyao"}
+  ]
 }

@@ -237,6 +237,9 @@ class QwenClient(BaseTranslationClient):
             config["session"]["translation"]["corpus"] = {
                 "phrases": dict(list(self.glossary.items())[:50])
             }
+            self.output_status(f"[ALIYUN] Glossary loaded: {len(self.glossary)} terms")
+            for s, t in list(self.glossary.items())[:5]:
+                self.output_debug(f"  {s} -> {t}")
 
         if self.audio_enabled:
             config["session"]["modalities"] = ["text", "audio"]
